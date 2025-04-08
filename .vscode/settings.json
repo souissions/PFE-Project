@@ -1,0 +1,6 @@
+{
+  "python.defaultInterpreterPath": "/home/onsso/miniconda3/envs/mini-rag/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": ["./src"],
+  "python.languageServer": "Pylance"
+}

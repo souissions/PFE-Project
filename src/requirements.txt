@@ -1,0 +1,19 @@
+fastapi==0.110.2               # Web framework for building APIs with Python, based on Starlette
+uvicorn[standard]==0.29.0      # ASGI server to run FastAPI apps, with standard extras like uvloop and httptools
+python-multipart==0.0.9        # Handles form data (e.g., file uploads) in FastAPI
+python-dotenv==1.0.1           # Loads environment variables from .env files
+pydantic-settings==2.2.1       # Helps manage app settings using Pydantic models
+aiofiles==23.2.1               # Async file operations, useful for reading/writing files non-blockingly
+langchain==0.1.20              # Framework for building apps with LLMs, chains, memory, tools, etc.
+PyMuPDF==1.24.3                # PDF and document parsing (used for reading content from PDF files)
+motor==3.4.0                   # Async MongoDB driver for Python (used with FastAPI + MongoDB)
+pydantic-mongo==2.3.0          # Bridges Pydantic models with MongoDB schema definitions
+openai==1.66.3                 # OpenAI API client (e.g., for GPT-4, embeddings, etc.)
+cohere==5.5.8                  # Cohere API client (alternative to OpenAI for LLMs and embeddings)
+qdrant-client==1.10.1          # Client for interacting with Qdrant vector database (for semantic search)
+SQLAlchemy==2.0.36             # ORM for SQL databases, like PostgreSQL
+asyncpg==0.30.0                # Async PostgreSQL driver (used with SQLAlchemy async engine)
+alembic==1.14.0                # Database migration tool for SQLAlchemy
+psycopg2==2.9.10               # Sync PostgreSQL driver (fallback or migrations)
+pgvector==0.4.0                # Adds vector search support to PostgreSQL (useful with LLM embeddings)
+nltk==3.9.1                    # Natural Language Toolkit, used for NLP tasks like tokenization, stemming
