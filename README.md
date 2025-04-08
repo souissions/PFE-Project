@@ -1,113 +1,145 @@
-# mini-rag
+# 🧠 RAG – Medical Retrieval-Augmented Generation System
 
-This is a minimal implementation of the RAG model for question answering.
+This project implements a custom **RAG (Retrieval-Augmented Generation)** system for intelligent document understanding and question answering. It's built using:
 
-## The Course
+- ⚙️ **FastAPI** for backend APIs
+- 🧠 **Cohere** for both embeddings & LLM answer generation
+- 📊 **PGVector** as the vector similarity database
+- 🎛️ **Streamlit** interface for file upload and user interaction
 
-This is an educational project where all of the codes where explained (step by step) via a set of `Arabic` youtube videos. Please check the list:
+---
 
-| # | Title                                    | Link                                                                                                 | Codes                                              |
-|---|------------------------------------------|------------------------------------------------------------------------------------------------------|----------------------------------------------------|
-| 1 | About the Course ماذا ولمـــاذا          | [Video](https://www.youtube.com/watch?v=Vv6e2Rb1Q6w&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj)         | NA                                                 |
-| 2 | What will we build ماذا سنبنى في المشروع | [Video](https://www.youtube.com/watch?v=_l5S5CdxE-Q&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj&index=2) | NA                                                 |
-| 3 | Setup your tools الأدوات الأساسية        | [Video](https://www.youtube.com/watch?v=VSFbkFRAT4w&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj&index=3) | NA                                                 |
-| 4 | Project Architecture                     | [Video](https://www.youtube.com/watch?v=Ei_nBwBbFUQ&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj&index=4) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-001) |
-| 5 | Welcome to FastAPI                       | [Video](https://www.youtube.com/watch?v=cpOuCdzN_Mo&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj&index=5) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-002) |
-| 6 | Nested Routes + Env Values               | [Video](https://www.youtube.com/watch?v=CrR2Bz2Y7Hw&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj&index=6) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-003) |
-| 7 | Uploading a File                         | [Video](https://www.youtube.com/watch?v=5alMKCbFqWs&list=PLvLvlVqNQGHCUR2p0b8a0QpVjDUg50wQj&index=7) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-004) |
-| 8 | File Processing                         | [Video](https://www.youtube.com/watch?v=gQgr2iwtSBw) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-005) |
-| 9 | Docker - MongoDB - Motor                         | [Video](https://www.youtube.com/watch?v=2NOKWm0xJAk) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-006) |
-| 10 | Mongo Schemes and Models                        | [Video](https://www.youtube.com/watch?v=zgcnnMJXXV8) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-007) |
-| 11 | Mongo Indexing                        | [Video](https://www.youtube.com/watch?v=iO8FAmUVcjE) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-008) |
-| 12 | Data Pipeline Enhancements                        | [Video](https://www.youtube.com/watch?v=4x1DuezZBDU) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-008) |
-| 13 | Checkpoint-1                        | [Video](https://www.youtube.com/watch?v=7xIsZkCisPk) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-008) |
-| 14 | LLM Factory                        | [Video](https://www.youtube.com/watch?v=5TKRIFtIQAY) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-008) |
-| 15 | Vector DB Factory                        | [Video](https://www.youtube.com/watch?v=JtS9UkvF_10) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-009) |
-| 16 | Semantic Search                       | [Video](https://www.youtube.com/watch?v=V3swQKokJW8) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-010) |
-| 17 | Augmented Answers                       | [Video](https://www.youtube.com/watch?v=1Wx8BoM5pLU) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-011) |
-| 18 | Checkpoint-1 + Fix Issues                       | [Video](https://youtu.be/6zG4Idxldvg) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-012) |
-| 19 | Ollama Local LLM Server                       | [Video](https://youtu.be/-epZ1hAAtrs) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-012) |
-| 20 | From Mongo to Postgres + SQLAlchemy & Alembic                       | [Video](https://www.youtube.com/watch?v=BVOq7Ek2Up0) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-013) |
-| 21 | The way to PgVector                       | [Video](https://www.youtube.com/watch?v=g99yq5zlYAE) | [branch](https://github.com/bakrianoo/mini-rag/tree/tut-014) |
+## 🔧 Features
 
+- ✅ Upload `.txt` or `.pdf` medical documents
+- ✅ Automatic chunking of text into digestible segments
+- ✅ Generation of **384-dimensional embeddings** using Cohere
+- ✅ Storage of vectors in **PGVector** for semantic retrieval
+- ✅ LLM-powered answer generation based on query + retrieved context
 
-## Requirements
+---
 
-- Python 3.10
+## 📁 Project Structure
 
-#### Install Dependencies
-
-```bash
-sudo apt update
-sudo apt install libpq-dev gcc python3-dev
+```
+mini-rag/
+├── src/
+│   ├── main.py                  # FastAPI app entry point
+│   ├── routes/                  # API endpoints (data, NLP)
+│   ├── controllers/             # Business logic (file processing, indexing, search)
+│   ├── models/                  # DB models + ORM layer
+│   ├── stores/
+│   │   ├── llm/                 # Embedding + generation (Cohere/OpenAI)
+│   │   └── vectordb/            # PGVector or Qdrant integration
+│   ├── views/                   # Streamlit frontend
+│
+├── docker/                      # Docker for PGVector/Mongo setup
+├── .env.example                 # Sample env config
+├── requirements.txt             # Python dependencies
+└── README.md
 ```
 
-#### Install Python using MiniConda
+---
 
-1) Download and install MiniConda from [here](https://docs.anaconda.com/free/miniconda/#quick-command-line-install)
-2) Create a new environment using the following command:
-```bash
-$ conda create -n mini-rag python=3.10
-```
-3) Activate the environment:
-```bash
-$ conda activate mini-rag
-```
+## ⚙️ Setup & Installation
 
-### (Optional) Setup you command line interface for better readability
+### 1. Install dependencies
 
 ```bash
-export PS1="\[\033[01;32m\]\u@\h:\w\n\[\033[00m\]\$ "
+pip install -r requirements.txt
 ```
 
-### (Optional) Run Ollama Local LLM Server using Colab + Ngrok
+---
 
-- Check the [notebook](https://colab.research.google.com/drive/1KNi3-9KtP-k-93T3wRcmRe37mRmGhL9p?usp=sharing) + [Video](https://youtu.be/-epZ1hAAtrs)
-
-## Installation
-
-### Install the required packages
+### 2. Create `.env` file
 
 ```bash
-$ pip install -r requirements.txt
+cp .env.example .env
 ```
 
-### Setup the environment variables
+Then fill in the values for:
+- `COHERE_API_KEY`
+- `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, etc.
+- `GENERATION_MODEL_ID` (e.g., `command-a-03-2025`)
+- `EMBEDDING_MODEL_ID` (e.g., `embed-multilingual-light-v3.0`)
+
+---
+
+### 3. Run Alembic DB Migration
 
 ```bash
-$ cp .env.example .env
+alembic upgrade head
 ```
 
-### Run Alembic Migration
+This sets up the DB tables for projects, assets, and chunks.
+
+---
+
+## 🐳 Start Vector DB via Docker
 
 ```bash
-$ alembic upgrade head
+cd docker
+cp .env.example .env  # optional but recommended
+docker compose up -d
 ```
 
-Set your environment variables in the `.env` file. Like `OPENAI_API_KEY` value.
+---
 
-## Run Docker Compose Services
+## 🚀 Run the FastAPI Server
 
 ```bash
-$ cd docker
-$ cp .env.example .env
+uvicorn main:app --reload --host 0.0.0.0 --port 5000
 ```
 
-- update `.env` with your credentials
+Go to:  
+📄 Swagger API Docs: http://localhost:5000/docs  
+Use this interface to test all endpoints: upload, process, index, search, and get answers
 
+---
 
+## 🖼️ Streamlit App (File Uploader & QA)
 
 ```bash
-$ cd docker
-$ sudo docker compose up -d
+streamlit run src/views/file_upload_app.py
 ```
 
-## Run the FastAPI server
+> Upload a medical document, and it will be chunked, embedded, indexed, and ready for querying.
 
-```bash
-$ uvicorn main:app --reload --host 0.0.0.0 --port 5000
-```
+---
 
-## POSTMAN Collection
+## 🔎 RAG Workflow Overview
 
-Download the POSTMAN collection from [/assets/mini-rag-app.postman_collection.json](/assets/mini-rag-app.postman_collection.json)
+1. **Upload File** → TXT / PDF  
+2. **Chunk Text** → via custom splitter  
+3. **Generate Embeddings** → using Cohere’s multilingual model  
+4. **Store Vectors** → in PGVector (Postgres)  
+5. **User Query** → embedded and compared via **cosine similarity**  
+6. **Retrieve Top Chunks** → most relevant context  
+7. **LLM Prompt + Answer** → using Cohere LLM (`command-a-03-2025`)  
+
+---
+
+## 📦 API Endpoints (Examples)
+
+| Endpoint                            | Description                           |
+|-------------------------------------|---------------------------------------|
+| `POST /api/v1/data/upload/{id}`     | Uploads a document                    |
+| `POST /api/v1/data/process/{id}`    | Chunks & embeds document              |
+| `POST /api/v1/nlp/index/push/{id}`  | Indexes all chunks into PGVector      |
+| `POST /api/v1/nlp/index/search/{id}`| Search relevant chunks via query      |
+| `POST /api/v1/nlp/index/answer/{id}`| Generates an LLM answer               |
+
+---
+
+## 🧠 Models Used
+
+| Purpose     | Model                                  |
+|-------------|----------------------------------------|
+| Embeddings  | `embed-multilingual-light-v3.0`(Cohere)|
+| Generation  | `command-a-03-2025` (Cohere)           |
+
+Embeddings have **384 dimensions** representing text meaning in vector space.  
+Similarity is calculated using **cosine similarity**.
+
+
+
