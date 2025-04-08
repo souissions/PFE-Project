@@ -7,8 +7,6 @@ This project implements a custom **RAG (Retrieval-Augmented Generation)** system
 - 📊 **PGVector** as the vector similarity database
 - 🎛️ **Streamlit** interface for file upload and user interaction
 
----
-
 ## 🔧 Features
 
 - ✅ Upload `.txt` or `.pdf` medical documents
@@ -17,11 +15,8 @@ This project implements a custom **RAG (Retrieval-Augmented Generation)** system
 - ✅ Storage of vectors in **PGVector** for semantic retrieval
 - ✅ LLM-powered answer generation based on query + retrieved context
 
----
-
 ## 📁 Project Structure
 
-```
 mini-rag/
 ├── src/
 │   ├── main.py                  # FastAPI app entry point
@@ -37,9 +32,6 @@ mini-rag/
 ├── .env.example                 # Sample env config
 ├── requirements.txt             # Python dependencies
 └── README.md
-```
-
----
 
 ## ⚙️ Setup & Installation
 
@@ -48,8 +40,6 @@ mini-rag/
 ```bash
 pip install -r requirements.txt
 ```
-
----
 
 ### 2. Create `.env` file
 
@@ -63,7 +53,6 @@ Then fill in the values for:
 - `GENERATION_MODEL_ID` (e.g., `command-a-03-2025`)
 - `EMBEDDING_MODEL_ID` (e.g., `embed-multilingual-light-v3.0`)
 
----
 
 ### 3. Run Alembic DB Migration
 
@@ -73,7 +62,6 @@ alembic upgrade head
 
 This sets up the DB tables for projects, assets, and chunks.
 
----
 
 ## 🐳 Start Vector DB via Docker
 
@@ -82,8 +70,6 @@ cd docker
 cp .env.example .env  # optional but recommended
 docker compose up -d
 ```
-
----
 
 ## 🚀 Run the FastAPI Server
 
@@ -105,8 +91,6 @@ streamlit run src/views/file_upload_app.py
 
 > Upload a medical document, and it will be chunked, embedded, indexed, and ready for querying.
 
----
-
 ## 🔎 RAG Workflow Overview
 
 1. **Upload File** → TXT / PDF  
@@ -117,19 +101,6 @@ streamlit run src/views/file_upload_app.py
 6. **Retrieve Top Chunks** → most relevant context  
 7. **LLM Prompt + Answer** → using Cohere LLM (`command-a-03-2025`)  
 
----
-
-## 📦 API Endpoints (Examples)
-
-| Endpoint                            | Description                           |
-|-------------------------------------|---------------------------------------|
-| `POST /api/v1/data/upload/{id}`     | Uploads a document                    |
-| `POST /api/v1/data/process/{id}`    | Chunks & embeds document              |
-| `POST /api/v1/nlp/index/push/{id}`  | Indexes all chunks into PGVector      |
-| `POST /api/v1/nlp/index/search/{id}`| Search relevant chunks via query      |
-| `POST /api/v1/nlp/index/answer/{id}`| Generates an LLM answer               |
-
----
 
 ## 🧠 Models Used
 
