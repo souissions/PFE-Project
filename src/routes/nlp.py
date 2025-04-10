@@ -18,11 +18,6 @@ nlp_router = APIRouter(
 
 @nlp_router.post("/index/push/{project_id}")
 async def index_project(request: Request, project_id: int, push_request: PushRequest):
-    """
-    Endpoint for indexing a project and pushing chunks to the vector DB.
-    """
-
-    # Retrieve project from DB or create one
 
     project_model = await ProjectModel.create_instance(
         db_client=request.app.db_client
@@ -44,8 +39,6 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
             }
         )
     
-    # Initialize NLPController for vector DB operations
-
     nlp_controller = NLPController(
         vectordb_client=request.app.vectordb_client,
         generation_client=request.app.generation_client,
@@ -67,12 +60,11 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
         do_reset=push_request.do_reset,
     )
 
-    # Set up progress bar for indexing
+    # setup batching
     total_chunks_count = await chunk_model.get_total_chunks_count(project_id=project.project_id)
     pbar = tqdm(total=total_chunks_count, desc="Vector Indexing", position=0)
 
     while has_records:
-        # Fetch chunks from the project and process them
         page_chunks = await chunk_model.get_poject_chunks(project_id=project.project_id, page_no=page_no)
         if len(page_chunks):
             page_no += 1
@@ -84,7 +76,6 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
         chunks_ids =  [ c.chunk_id for c in page_chunks ]
         idx += len(page_chunks)
         
-        # Index the chunks into the vector DB
         is_inserted = await nlp_controller.index_into_vector_db(
             project=project,
             chunks=page_chunks,
@@ -170,68 +161,6 @@ async def search_index(request: Request, project_id: int, search_request: Search
         content={
             "signal": ResponseSignal.VECTORDB_SEARCH_SUCCESS.value,
             "results": [ result.dict()  for result in results ]
-        }
-    )
-
-
-@nlp_router.post("/index/answer/all")
-async def answer_rag_all(request: Request, search_request: SearchRequest):
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    # Get all projects from the DB
-    projects, _ = await project_model.get_all_projects(page=1, page_size=1000)
-
-    if not projects:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={
-                "signal": ResponseSignal.PROJECT_NOT_FOUND_ERROR.value,
-                "message": "No projects found"
-            }
-        )
-
-    # NLP controller (reused)
-    nlp_controller = NLPController(
-        vectordb_client=request.app.vectordb_client,
-        generation_client=request.app.generation_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
-
-    all_results = []
-
-    for project in projects:
-        try:
-            answer, full_prompt, chat_history = await nlp_controller.answer_rag_question(
-                project=project,
-                query=search_request.text,
-                limit=search_request.limit,
-            )
-            if answer:
-                all_results.append({
-                    "project_id": project.project_id,
-                    "answer": answer,
-                    "full_prompt": full_prompt,
-                    "chat_history": chat_history
-                })
-        except Exception as e:
-            continue  # Optionally log the project that failed
-
-    if not all_results:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={
-                "signal": ResponseSignal.RAG_ANSWER_ERROR.value,
-                "message": "No answers generated from any project"
-            }
-        )
-
-    return JSONResponse(
-        content={
-            "signal": ResponseSignal.GLOBAL_RAG_ANSWER_SUCCESS.value,
-            "results": all_results
         }
     )
 

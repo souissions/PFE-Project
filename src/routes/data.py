@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 import os
 from helpers.config import get_settings, Settings
 from controllers import DataController, ProjectController, ProcessController
-import aiofiles 
+import aiofiles
 from models import ResponseSignal
 import logging
 from .schemes.data import ProcessRequest
@@ -25,7 +25,7 @@ data_router = APIRouter(
 async def upload_data(request: Request, project_id: int, file: UploadFile,
                       app_settings: Settings = Depends(get_settings)):
         
-    # Create or retrieve project instance
+    
     project_model = await ProjectModel.create_instance(
         db_client=request.app.db_client
     )
@@ -34,7 +34,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
         project_id=project_id
     )
 
-    # validate the uploaded file properties (type and size using DataController)
+    # validate the file properties
     data_controller = DataController()
 
     is_valid, result_signal = data_controller.validate_uploaded_file(file=file)
@@ -46,7 +46,6 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
                 "signal": result_signal
             }
         )
-    # Generate unique file path and ID + Save the file
 
     project_dir_path = ProjectController().get_project_path(project_id=project_id)
     file_path, file_id = data_controller.generate_unique_filepath(
@@ -55,7 +54,6 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
     )
 
     try:
-        # Save the uploaded file asynchronously using aiofiles
         async with aiofiles.open(file_path, "wb") as f:
             while chunk := await file.read(app_settings.FILE_DEFAULT_CHUNK_SIZE):
                 await f.write(chunk)
