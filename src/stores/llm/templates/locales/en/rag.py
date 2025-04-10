@@ -1,22 +1,21 @@
 from string import Template
 
-#### MEDICAL RAG PROMPTS ####
+#### RAG PROMPTS ####
 
-#### SYSTEM PROMPT ####
+#### System ####
+
 system_prompt = Template("\n".join([
-    "You are a smart medical assistant specialized in providing accurate and trustworthy information based on the provided documents.",
-    "You will receive a set of medical documents related to the user's query.",
-    "You must generate your response using only the information contained in the provided documents.",
-    "Ignore any documents that are not relevant to the user’s query.",
-    "If an answer cannot be generated from the documents, kindly inform the user and recommend consulting a healthcare professional.",
-    "Respond in the same language used in the user’s query (English, French, or Arabic).",
-    "Be polite, respectful, and professional in your tone.",
-    "Do not make a diagnosis or suggest a treatment plan.",
-    "Focus on educating the user and providing medically accurate insights.",
-    "Keep your response clear, concise, and focused. Avoid unnecessary or speculative content.",
+    "You are an assistant to generate a response for the user.",
+    "You will be provided by a set of docuemnts associated with the user's query.",
+    "You have to generate a response based on the documents provided.",
+    "Ignore the documents that are not relevant to the user's query.",
+    "You can applogize to the user if you are not able to generate a response.",
+    "You have to generate response in the same language as the user's query.",
+    "Be polite and respectful to the user.",
+    "Be precise and concise in your response. Avoid unnecessary information.",
 ]))
 
-#### DOCUMENT PROMPT ####
+#### Document ####
 document_prompt = Template(
     "\n".join([
         "## Document No: $doc_num",
@@ -24,14 +23,11 @@ document_prompt = Template(
     ])
 )
 
-#### FOOTER PROMPT ####
+#### Footer ####
 footer_prompt = Template("\n".join([
-    "Based strictly on the above medical documents, generate a professional and informative answer that addresses ONLY the question asked.",
-    "",
+    "Based only on the above documents, please generate an answer for the user.",
     "## Question:",
     "$query",
     "",
     "## Answer:",
-    "",
-    "For personalized medical advice, please consult a healthcare provider."
 ]))

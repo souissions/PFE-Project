@@ -46,9 +46,3 @@ class Settings(BaseSettings):
 
 def get_settings():
     return Settings()
-
-
-
-#centralizes all the app’s environment variables using Pydantic to ensure everything is typed, clean, and loaded from .env
-#It makes sure that any data (from user input, .env, or external source) matches the type defined
-
