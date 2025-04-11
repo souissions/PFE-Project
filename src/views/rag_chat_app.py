@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 
 # --- Config ---
-API_URL = "http://localhost:5000/api/v1/nlp/index/answer/all"
+API_URL_TEMPLATE = "http://localhost:5000/api/v1/nlp/index/answer/1"  # Default project_id is 1
 st.set_page_config(page_title="Mini-RAG Medical Chatbot", page_icon="🩺", layout="centered")
 
 # --- Page Title & Info ---
@@ -27,10 +27,6 @@ for speaker, message in st.session_state.chat_history:
     with st.chat_message(speaker):
         st.markdown(message)
 
-# --- Helper: Check for irrelevant answers ---
-def is_not_found(text):
-    return "do not contain" in text.lower() or "not contain any information" in text.lower()
-
 # --- Chat Input ---
 if user_input := st.chat_input("Type your medical question here..."):
     st.chat_message("user").markdown(user_input)
@@ -41,29 +37,33 @@ if user_input := st.chat_input("Type your medical question here..."):
     else:
         with st.spinner("🔍 Searching medical knowledge base..."):
             try:
+                # Construct the API URL (using default project_id=1 for all files)
+                api_url = API_URL_TEMPLATE  # Always use the default project_id (1)
+
+                # Prepare the payload for the API request
                 payload = {"text": user_input, "limit": limit}
-                response = requests.post(API_URL, json=payload, timeout=15)
-                data = response.json()
-                results = data.get("results", [])
+                response = requests.post(api_url, json=payload, timeout=15)
 
-                valid_answers = [r for r in results if not is_not_found(r["answer"])]
+                # Check if the response is valid (status code 200)
+                if response.status_code == 200:
+                    data = response.json()
 
-                # Pick best answer (keyword-based priority)
-                best = None
-                if valid_answers:
-                    keyword_hits = [r for r in valid_answers if "symptom" in r["answer"].lower() or "include" in r["answer"].lower()]
-                    best = keyword_hits[0] if keyword_hits else valid_answers[0]
+                    # Debugging: Show full API response in Streamlit
+                    st.write("Full API Response:", data)  # Display the full response to understand structure
 
-                bot_message = (
-                    f"**Project {best['project_id']}**\n\n{best['answer']}"
-                    if best else
-                    "❌ Sorry, none of the medical projects contain information related to your question."
-                )
+                    # Extract the answer directly from the response
+                    answer = data.get("answer", "No answer found.")
+                    bot_message = f"**Answer:** {answer}"
+
+                else:
+                    # Handle API response error
+                    bot_message = f"⚠️ Error: Received unexpected status code {response.status_code} from the RAG API."
 
             except Exception as e:
+                # Handle exception during API call
                 bot_message = f"⚠️ Error while contacting the RAG API: `{e}`"
 
-        # Cache the result
+        # Cache the result for future use
         st.session_state.cached_queries[user_input] = bot_message
 
     # Show bot response
@@ -72,3 +72,9 @@ if user_input := st.chat_input("Type your medical question here..."):
     # Update chat history
     st.session_state.chat_history.append(("user", user_input))
     st.session_state.chat_history.append(("assistant", bot_message))
+
+# --- Reset Button (Optional) ---
+if st.button("Clear Chat"):
+    st.session_state.chat_history.clear()
+    st.session_state.cached_queries.clear()
+    st.experimental_rerun()  # Reload the page
