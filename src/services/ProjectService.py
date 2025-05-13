@@ -1,9 +1,9 @@
-from .BaseController import BaseController
+from .BaseService import BaseService
 from fastapi import UploadFile
 from models import ResponseSignal
 import os
 
-class ProjectController(BaseController):
+class ProjectService(BaseService):
     
     def __init__(self):
         super().__init__()

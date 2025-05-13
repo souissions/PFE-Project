@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, Depends, UploadFile, status, Request
 from fastapi.responses import JSONResponse
 import os
 from helpers.config import get_settings, Settings
-from controllers import DataController, ProjectController, ProcessController
+from services import DataService, ProjectService, ProcessService
 import aiofiles
 from models import ResponseSignal
 import logging
@@ -12,7 +12,7 @@ from models.ChunkModel import ChunkModel
 from models.AssetModel import AssetModel
 from models.db_schemes import DataChunk, Asset
 from models.enums.AssetTypeEnum import AssetTypeEnum
-from controllers import NLPController
+from services import NLPService
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -35,7 +35,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
     )
 
     # validate the file properties
-    data_controller = DataController()
+    data_controller = DataService()
 
     is_valid, result_signal = data_controller.validate_uploaded_file(file=file)
 
@@ -47,7 +47,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
             }
         )
 
-    project_dir_path = ProjectController().get_project_path(project_id=project_id)
+    project_dir_path = ProjectService().get_project_path(project_id=project_id)
     file_path, file_id = data_controller.generate_unique_filepath(
         orig_file_name=file.filename,
         project_id=project_id
@@ -104,7 +104,7 @@ async def process_endpoint(request: Request, project_id: int, process_request: P
         project_id=project_id
     )
 
-    nlp_controller = NLPController(
+    nlp_controller = NLPService(
         vectordb_client=request.app.vectordb_client,
         generation_client=request.app.generation_client,
         embedding_client=request.app.embedding_client,
@@ -155,7 +155,7 @@ async def process_endpoint(request: Request, project_id: int, process_request: P
             }
         )
     
-    process_controller = ProcessController(project_id=project_id)
+    process_controller = ProcessService(project_id=project_id)
 
     no_records = 0
     no_files = 0

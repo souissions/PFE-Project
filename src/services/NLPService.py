@@ -1,10 +1,12 @@
-from .BaseController import BaseController
+from .BaseService import BaseService
 from models.db_schemes import Project, DataChunk
 from stores.llm.LLMEnums import DocumentTypeEnum
 from typing import List
 import json
+from graph_builder import build_graph
+from state import AgentState
 
-class NLPController(BaseController):
+class NLPService(BaseService):
 
     def __init__(self, vectordb_client, generation_client, 
                  embedding_client, template_parser):
@@ -138,4 +140,33 @@ class NLPController(BaseController):
         )
 
         return answer, full_prompt, chat_history
+    
+    async def run_langgraph_flow(self, query: str, image_bytes: bytes = None) -> dict:
+        compiled_graph = build_graph()
+
+        if not compiled_graph:
+            return {"error": "Graph could not be initialized."}
+
+        initial_state: AgentState = {
+            "conversation_history": [],
+            "user_query": query,
+            "uploaded_image_bytes": image_bytes,
+            "image_prompt_text": None,
+            "user_intent": None,
+            "accumulated_symptoms": "",
+            "is_relevant": None,
+            "loop_count": 0,
+            "rag_context": None,
+            "matched_icd_codes": None,
+            "initial_explanation": None,
+            "evaluator_critique": None,
+            "final_explanation": None,
+            "recommended_specialist": None,
+            "doctor_recommendations": None,
+            "no_doctors_found_specialist": None,
+            "final_response": None
+        }
+
+        final_state = await compiled_graph.invoke(initial_state)
+        return final_state
 

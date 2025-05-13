@@ -3,7 +3,7 @@ import os
 import random
 import string
 
-class BaseController:
+class BaseService:
     
     def __init__(self):
 

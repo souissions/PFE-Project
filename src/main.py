@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routes import base, data, nlp
+from controllers import base, data, nlp
 from helpers.config import get_settings
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory

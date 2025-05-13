@@ -1,11 +1,13 @@
 from fastapi import FastAPI, APIRouter, status, Request
 from fastapi.responses import JSONResponse
-from routes.schemes.nlp import PushRequest, SearchRequest
+from controllers.schemes.nlp import PushRequest, SearchRequest
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
-from controllers import NLPController
+from services import NLPService
 from models import ResponseSignal
 from tqdm.auto import tqdm
+from graph_builder import build_graph
+from state import AgentState
 
 import logging
 
@@ -39,7 +41,7 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
             }
         )
     
-    nlp_controller = NLPController(
+    nlp_controller = NLPService(
         vectordb_client=request.app.vectordb_client,
         generation_client=request.app.generation_client,
         embedding_client=request.app.embedding_client,
@@ -111,7 +113,7 @@ async def get_project_index_info(request: Request, project_id: int):
         project_id=project_id
     )
 
-    nlp_controller = NLPController(
+    nlp_controller = NLPService(
         vectordb_client=request.app.vectordb_client,
         generation_client=request.app.generation_client,
         embedding_client=request.app.embedding_client,
@@ -138,7 +140,7 @@ async def search_index(request: Request, project_id: int, search_request: Search
         project_id=project_id
     )
 
-    nlp_controller = NLPController(
+    nlp_controller = NLPService(
         vectordb_client=request.app.vectordb_client,
         generation_client=request.app.generation_client,
         embedding_client=request.app.embedding_client,
@@ -175,7 +177,7 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
         project_id=project_id
     )
 
-    nlp_controller = NLPController(
+    nlp_controller = NLPService(
         vectordb_client=request.app.vectordb_client,
         generation_client=request.app.generation_client,
         embedding_client=request.app.embedding_client,
@@ -202,5 +204,35 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
             "answer": answer,
             "full_prompt": full_prompt,
             "chat_history": chat_history
+        }
+    )
+@nlp_router.post("/triage/{project_id}")
+async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
+
+    project_model = await ProjectModel.create_instance(
+        db_client=request.app.db_client
+    )
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+
+    nlp_controller = NLPService(
+        vectordb_client=request.app.vectordb_client,
+        generation_client=request.app.generation_client,
+        embedding_client=request.app.embedding_client,
+        template_parser=request.app.template_parser,
+    )
+
+    result = await nlp_controller.run_langgraph_flow(query=search_request.text)
+
+    if not result or "final_response" not in result:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value}
+        )
+
+    return JSONResponse(
+        content={
+            "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
+            "response": result["final_response"],
+            "state": result  # full debug info
         }
     )
