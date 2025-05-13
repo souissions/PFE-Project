@@ -3,6 +3,17 @@ from enum import Enum
 class LLMEnums(Enum):
     OPENAI = "OPENAI"
     COHERE = "COHERE"
+    GOOGLE = "GOOGLE"  
+
+# Add Google specific enums if needed
+class GoogleEnums(Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    
+    # For embeddings if needed
+    DOCUMENT = "document"
+    QUERY = "query"
 
 class OpenAIEnums(Enum):
     SYSTEM = "system"

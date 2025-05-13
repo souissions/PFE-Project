@@ -3,7 +3,7 @@ from models.db_schemes import Project, DataChunk
 from stores.llm.LLMEnums import DocumentTypeEnum
 from typing import List
 import json
-from graph_builder import build_graph
+from stores.langgraph.graph import build_graph
 from state import AgentState
 
 class NLPService(BaseService):
