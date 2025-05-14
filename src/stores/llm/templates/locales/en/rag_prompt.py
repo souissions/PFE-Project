@@ -1,8 +1,6 @@
 from string import Template
 
-#### RAG PROMPTS ####
-
-#### System ####
+#### System #### Defines the AI's behavior and constraints
 
 system_prompt = Template("\n".join([
     "You are an assistant to generate a response for the user.",
@@ -15,7 +13,7 @@ system_prompt = Template("\n".join([
     "Be precise and concise in your response. Avoid unnecessary information.",
 ]))
 
-#### Document ####
+#### Document #### Structures how retrieved documents are presented to the AI
 document_prompt = Template(
     "\n".join([
         "## Document No: $doc_num",
@@ -23,7 +21,7 @@ document_prompt = Template(
     ])
 )
 
-#### Footer ####
+#### Footer #### Instructs the AI to generate the final answer
 footer_prompt = Template("\n".join([
     "Based only on the above documents, please generate an answer for the user.",
     "## Question:",
@@ -31,3 +29,10 @@ footer_prompt = Template("\n".join([
     "",
     "## Answer:",
 ]))
+
+#Retrieval Phase: The system fetches documents relevant to the user's query.
+
+#Formatting Phase: Each document is formatted using document_prompt.
+
+#Generation Phase: The AI reads the formatted documents + system_prompt + footer_prompt.
+

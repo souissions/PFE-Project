@@ -2,7 +2,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 class Settings(BaseSettings):
+    # API and model configuration
+    GOOGLE_API_KEY: str
+    GOOGLE_CSE_ID: str
+    FASTAPI_URL: str = "http://localhost:5000"  # Default to localhost if not specified
 
+    # Paths for datasets and vector stores
+    DATA_FOLDER: str
+    DB_FAISS_PATH: str
+    ICD_CSV_PATH: str
+    ICD_CACHE_PATH: str
+    PATIENT_CASES_PATH: str
+    SPECIALIST_LIST_PATH: str
+
+    # Model names
+    EMBEDDING_MODEL_NAME: str
+    LLM_MODEL_NAME: str
+
+    # Existing settings
     APP_NAME: str
     APP_VERSION: str
     OPENAI_API_KEY: str
@@ -20,7 +37,6 @@ class Settings(BaseSettings):
     GENERATION_BACKEND: str
     EMBEDDING_BACKEND: str
 
-    OPENAI_API_KEY: str = None
     OPENAI_API_URL: str = None
     COHERE_API_KEY: str = None
 
@@ -33,16 +49,15 @@ class Settings(BaseSettings):
     GENERATION_DAFAULT_TEMPERATURE: float = None
 
     VECTOR_DB_BACKEND_LITERAL: List[str] = None
-    VECTOR_DB_BACKEND : str
-    VECTOR_DB_PATH : str
+    VECTOR_DB_BACKEND: str
+    VECTOR_DB_PATH: str
     VECTOR_DB_DISTANCE_METHOD: str = None
     VECTOR_DB_PGVEC_INDEX_THRESHOLD: int = 100
 
     PRIMARY_LANG: str = "en"
     DEFAULT_LANG: str = "en"
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env", extra="allow")
 
 def get_settings():
     return Settings()

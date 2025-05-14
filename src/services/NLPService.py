@@ -1,10 +1,13 @@
 from .BaseService import BaseService
 from models.db_schemes import Project, DataChunk
 from stores.llm.LLMEnums import DocumentTypeEnum
-from typing import List
+from typing import List, Dict, Any, Optional
 import json
-from stores.langgraph.graph import build_graph
-from state import AgentState
+import logging
+from stores.langgraph.graph import graph
+from stores.langgraph.scheme.state import AgentState
+
+logger = logging.getLogger('uvicorn.error')
 
 class NLPService(BaseService):
 
@@ -141,32 +144,106 @@ class NLPService(BaseService):
 
         return answer, full_prompt, chat_history
     
-    async def run_langgraph_flow(self, query: str, image_bytes: bytes = None) -> dict:
-        compiled_graph = build_graph()
+    async def classify_intent(self, text: str) -> Dict[str, Any]:
+        """Classify user intent using LangGraph."""
+        try:
+            state = AgentState(user_input=text)
+            result = await graph._classify_intent(state)
+            return {
+                "intent": result.intent_classification.intent,
+                "confidence": result.intent_classification.confidence
+            }
+        except Exception as e:
+            logger.error(f"Error in intent classification: {e}")
+            raise
 
-        if not compiled_graph:
-            return {"error": "Graph could not be initialized."}
+    async def check_relevance(self, text: str) -> Dict[str, Any]:
+        """Check if the case is relevant for triage."""
+        try:
+            state = AgentState(user_input=text)
+            result = await graph._check_relevance(state)
+            return {
+                "is_relevant": result.relevance_check.is_relevant,
+                "confidence": result.relevance_check.confidence
+            }
+        except Exception as e:
+            logger.error(f"Error in relevance check: {e}")
+            raise
 
-        initial_state: AgentState = {
-            "conversation_history": [],
-            "user_query": query,
-            "uploaded_image_bytes": image_bytes,
-            "image_prompt_text": None,
-            "user_intent": None,
-            "accumulated_symptoms": "",
-            "is_relevant": None,
-            "loop_count": 0,
-            "rag_context": None,
-            "matched_icd_codes": None,
-            "initial_explanation": None,
-            "evaluator_critique": None,
-            "final_explanation": None,
-            "recommended_specialist": None,
-            "doctor_recommendations": None,
-            "no_doctors_found_specialist": None,
-            "final_response": None
-        }
+    async def process_information(self, query: str, docs: List[Dict], web_results: List[Dict]) -> str:
+        """Process information requests."""
+        try:
+            state = AgentState(user_input=query)
+            state.relevant_docs = docs
+            state.web_results = web_results
+            result = await graph._handle_information_request(state)
+            return result.final_output
+        except Exception as e:
+            logger.error(f"Error in information processing: {e}")
+            raise
 
-        final_state = await compiled_graph.invoke(initial_state)
-        return final_state
+    async def perform_analysis(self, symptoms: str, docs: List[Dict], icd_codes: List[Dict]) -> Dict[str, Any]:
+        """Perform final analysis."""
+        try:
+            state = AgentState(user_input=symptoms)
+            state.relevant_docs = docs
+            state.matched_icd_codes = icd_codes
+            result = await graph._final_analysis(state)
+            return {
+                "analysis": result.final_analysis.analysis,
+                "relevant_docs": result.final_analysis.relevant_docs,
+                "matched_icd_codes": result.final_analysis.matched_icd_codes
+            }
+        except Exception as e:
+            logger.error(f"Error in analysis: {e}")
+            raise
+
+    async def evaluate_explanation(self, explanation: str) -> Dict[str, Any]:
+        """Evaluate explanation quality."""
+        try:
+            state = AgentState()
+            state.final_analysis.analysis = explanation
+            result = await graph._evaluate_explanation(state)
+            return {
+                "needs_refinement": result.explanation_evaluation["needs_refinement"],
+                "confidence": result.explanation_evaluation["confidence"]
+            }
+        except Exception as e:
+            logger.error(f"Error in explanation evaluation: {e}")
+            raise
+
+    async def refine_explanation(self, explanation: str, critique: str) -> str:
+        """Refine explanation if needed."""
+        try:
+            state = AgentState()
+            state.final_analysis.analysis = explanation
+            state.explanation_evaluation = {"critique": critique}
+            result = await graph._refine_explanation(state)
+            return result.final_analysis.analysis
+        except Exception as e:
+            logger.error(f"Error in explanation refinement: {e}")
+            raise
+
+    async def prepare_output(self, analysis: str, icd_codes: List[Dict]) -> str:
+        """Prepare final output."""
+        try:
+            state = AgentState()
+            state.final_analysis.analysis = analysis
+            state.final_analysis.matched_icd_codes = icd_codes
+            result = await graph._prepare_final_output(state)
+            return result.final_output
+        except Exception as e:
+            logger.error(f"Error in output preparation: {e}")
+            raise
+
+    async def run_langgraph_flow(self, query: str, image_bytes: Optional[bytes] = None) -> Dict[str, Any]:
+        """Run the complete LangGraph flow."""
+        try:
+            logger.info("Starting LangGraph flow...")
+            result = await graph.run(query)
+            logger.info("LangGraph flow completed successfully")
+            return result
+        except Exception as e:
+            logger.error(f"Error in LangGraph flow: {e}")
+            return {"error": str(e)}
 

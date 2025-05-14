@@ -6,8 +6,8 @@ from models.ChunkModel import ChunkModel
 from services import NLPService
 from models import ResponseSignal
 from tqdm.auto import tqdm
-from graph_builder import build_graph
-from state import AgentState
+from stores.langgraph.graph import graph
+from stores.langgraph.scheme.state import AgentState
 
 import logging
 
@@ -236,3 +236,137 @@ async def triage_with_graph(request: Request, project_id: int, search_request: S
             "state": result  # full debug info
         }
     )
+
+@nlp_router.post("/intent/classify")
+async def classify_intent(request: Request, text: str):
+    """Classify user intent."""
+    try:
+        state = AgentState(user_input=text)
+        result = await graph._classify_intent(state)
+        return JSONResponse(
+            content={
+                "intent": result.intent_classification.intent,
+                "confidence": result.intent_classification.confidence
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in intent classification: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+@nlp_router.post("/relevance/check")
+async def check_relevance(request: Request, text: str):
+    """Check if the case is relevant for triage."""
+    try:
+        state = AgentState(user_input=text)
+        result = await graph._check_relevance(state)
+        return JSONResponse(
+            content={
+                "is_relevant": result.relevance_check.is_relevant,
+                "confidence": result.relevance_check.confidence
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in relevance check: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+@nlp_router.post("/info/process")
+async def process_information(request: Request, query: str, docs: list, web_results: list):
+    """Process information requests."""
+    try:
+        state = AgentState(user_input=query)
+        state.relevant_docs = docs
+        state.web_results = web_results
+        result = await graph._handle_information_request(state)
+        return JSONResponse(
+            content={"response": result.final_output}
+        )
+    except Exception as e:
+        logger.error(f"Error in information processing: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+@nlp_router.post("/analysis/perform")
+async def perform_analysis(request: Request, symptoms: str, docs: list, icd_codes: list):
+    """Perform final analysis."""
+    try:
+        state = AgentState(user_input=symptoms)
+        state.relevant_docs = docs
+        state.matched_icd_codes = icd_codes
+        result = await graph._final_analysis(state)
+        return JSONResponse(
+            content={
+                "analysis": result.final_analysis.analysis,
+                "relevant_docs": result.final_analysis.relevant_docs,
+                "matched_icd_codes": result.final_analysis.matched_icd_codes
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in analysis: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+@nlp_router.post("/explanation/evaluate")
+async def evaluate_explanation(request: Request, explanation: str):
+    """Evaluate explanation quality."""
+    try:
+        state = AgentState()
+        state.final_analysis.analysis = explanation
+        result = await graph._evaluate_explanation(state)
+        return JSONResponse(
+            content={
+                "needs_refinement": result.explanation_evaluation["needs_refinement"],
+                "confidence": result.explanation_evaluation["confidence"]
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in explanation evaluation: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+@nlp_router.post("/explanation/refine")
+async def refine_explanation(request: Request, explanation: str, critique: str):
+    """Refine explanation if needed."""
+    try:
+        state = AgentState()
+        state.final_analysis.analysis = explanation
+        state.explanation_evaluation = {"critique": critique}
+        result = await graph._refine_explanation(state)
+        return JSONResponse(
+            content={"refined_explanation": result.final_analysis.analysis}
+        )
+    except Exception as e:
+        logger.error(f"Error in explanation refinement: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
+
+@nlp_router.post("/output/prepare")
+async def prepare_output(request: Request, analysis: str, icd_codes: list):
+    """Prepare final output."""
+    try:
+        state = AgentState()
+        state.final_analysis.analysis = analysis
+        state.final_analysis.matched_icd_codes = icd_codes
+        result = await graph._prepare_final_output(state)
+        return JSONResponse(
+            content={"output": result.final_output}
+        )
+    except Exception as e:
+        logger.error(f"Error in output preparation: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )

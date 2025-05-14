@@ -1,7 +1,11 @@
 # app_agentic.py
-import streamlit as st
-import os
+
 import sys
+import os
+
+# Add the src directory to Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import streamlit as st
 import nltk
 import pandas as pd
 from dotenv import load_dotenv
@@ -9,15 +13,20 @@ import traceback
 from typing import Dict, List, Optional, Any # For type hinting
 from PIL import Image # Needed to check image type/validity
 import io # Needed to read image bytes
+import requests
+import json
+from stores.langgraph.scheme.state import AgentState
+
 
 # --- Must be first Streamlit command ---
 st.set_page_config(page_title="AI Symptom checker", layout="wide")
 
-
+# --- Load Environment Variables ---
+load_dotenv()
+BASE_URL = os.getenv("FASTAPI_URL", "http://localhost:5000")
 
 # --- Now safe to import custom modules & utils ---
-from state import AgentState
-from utils import (
+from stores.langgraph.utils import (
     load_embedding_model, load_llm, load_vector_store,
     load_icd_data_and_embeddings, load_dataframes, load_specialist_list
 )
@@ -82,7 +91,7 @@ st.title("🩺 AI Symptom Checker")
 # --- Initialize Streamlit Session State ---
 if 'messages' not in st.session_state:
     st.session_state.messages = []
-    initial_greeting = "Hi! I’m your pre-consultation assistant, here to help your doctor better understand your condition!"
+    initial_greeting = "Hi! I'm your pre-consultation assistant, here to help your doctor better understand your condition!"
     st.session_state.messages.append({"role": "assistant", "content": initial_greeting})
 
 if 'agent_final_state' not in st.session_state:
@@ -201,29 +210,36 @@ if prompt:
 
         # 5. Execute the agent graph
         final_state: Optional[Dict[str, Any]] = None
-        with st.spinner("Agent processing your request..."):
+        with st.spinner("Processing your request..."):
             try:
-                print("\nInvoking Agent Graph...")
-                final_state = graph_app.invoke(initial_graph_input, {"recursion_limit": 15}) # Increased limit slightly
-                st.session_state.agent_final_state = final_state
-                print("\n--- Agent Run Completed: Final State ---")
-                if final_state:
-                    # Log state concisely
-                    for key, value in final_state.items():
-                         if key == "conversation_history": print(f"  {key}: List len {len(value)}")
-                         elif key == "uploaded_image_bytes": print(f"  {key}: {'Present' if value else 'None'}")
-                         elif isinstance(value, pd.DataFrame): print(f"  {key}: DataFrame shape {value.shape}")
-                         elif isinstance(value, list) and len(value) > 5: print(f"  {key}: List len {len(value)}")
-                         elif isinstance(value, str) and len(value) > 100 : print(f"  {key}: {value[:100]}...")
-                         elif value is not None: print(f"  {key}: {value}")
-                print("--------------------------------------\n")
+                response = requests.post(
+                    f"{BASE_URL}/api/v1/nlp/triage/1",  # Using project_id 1 for now
+                    json={"text": user_text_input}
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    final_state = result.get("state", {})
+                    agent_response = result.get("response")
+                    
+                    st.session_state.agent_final_state = final_state
+                    
+                    if agent_response:
+                        st.session_state.messages.append({"role": "assistant", "content": agent_response})
+                        st.session_state.agent_input_history.append({"role": "assistant", "content": agent_response})
+                    else:
+                        error_msg = "No response received from the AI."
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                else:
+                    error_msg = f"Error: {response.status_code} - {response.text}"
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
 
             except Exception as e:
-                print(f"Error invoking agent graph: {e}")
+                print(f"Error processing request: {e}")
                 traceback.print_exc()
                 error_msg = f"An error occurred while processing your request: {e}"
-                # Error will be added to history below
-                st.session_state.agent_final_state = None # Clear state on error
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                st.session_state.agent_final_state = None
 
         # 6. Extract primary text response for chat history
         agent_response = final_state.get("final_response") if final_state else None
@@ -302,10 +318,10 @@ if st.session_state.agent_final_state:
 
 # --- Sidebar Elements ---
 st.sidebar.header("About")
-st.sidebar.info("Agentic AI Symptom Checker using LangGraph")
+st.sidebar.info("AI Symptom Checker using LangGraph and FastAPI")
 st.sidebar.header("Data Sources")
-st.sidebar.markdown(f"- Local PDFs, articles and Gale Encyclopedia of Medicine in `data/` folder")
-st.sidebar.markdown(f"- ICD-10 Mapping")
+st.sidebar.markdown("- Medical knowledge base")
+st.sidebar.markdown("- ICD-10 Mapping")
 
 # --- Restart Button ---
 if st.sidebar.button("🔄 Restart Conversation"):
@@ -316,7 +332,7 @@ if st.sidebar.button("🔄 Restart Conversation"):
     # Re-initialize empty lists and add greeting
     st.session_state.messages = []
     st.session_state.agent_input_history = []
-    initial_greeting = "Hi! I’m your pre-consultation assistant, here to help your doctor better understand your condition!"
+    initial_greeting = "Hi! I'm your pre-consultation assistant, here to help your doctor better understand your condition!"
     st.session_state.messages.append({"role": "assistant", "content": initial_greeting})
     st.session_state.agent_input_history.append({"role": "assistant", "content": initial_greeting})
     st.rerun()

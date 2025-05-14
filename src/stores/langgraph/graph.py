@@ -3,142 +3,172 @@
 
 
 from langgraph.graph import StateGraph, END
-from state import AgentState  # Import the AgentState class (you can keep this in state.py or move it here)
+from stores.langgraph.scheme.state import AgentState
+from stores.langgraph.graphFlow import GraphFlow
+from typing import Callable, Dict, Any
+import logging
 
-from tools import *  # To import all functions from tools.py
-from utils import load_llm  # To load the LLM instance
+logger = logging.getLogger("uvicorn")
 
-MAX_REFINE_LOOPS = 2 # Max times to run the refine->evaluate loop
+class Graph:
+    def __init__(self, graph_flow: GraphFlow):
+        self.graph_flow = graph_flow
+        self.graph = StateGraph(AgentState)
+        self.MAX_REFINE_LOOPS = 2
 
+    # Define conditional edge handlers that correctly return the routing decision
+    async def route_based_on_intent(self, state: AgentState) -> str:
+        """Routes based on user intent classification."""
+        logger.info("🔄 Routing based on intent...")
+        new_state = await self.graph_flow.classify_intent(state)
+        intent = new_state.get("user_intent", "OFF_TOPIC")
+        logger.info(f"➡️ Routed to: {intent}")
+        
+        if intent == "SYMPTOM_TRIAGE":
+            return "gather_symptoms"
+        elif intent == "MEDICAL_INFORMATION_REQUEST":
+            return "handle_info_request"
+        else:
+            return "handle_off_topic"
 
-from GraphFlow import (
-    classify_intent_node,
-    gather_symptoms_node,
-    check_triage_relevance_node,
-    handle_info_request_node,
-    handle_off_topic_node,
-    handle_irrelevant_triage_node,
-    perform_final_analysis_node,
-    evaluate_explanation_node,
-    refine_explanation_node,
-    extract_specialist_and_doctors_node,
-    prepare_final_output_node
-)
-from stores.langgraph.llm.templates.en.langgraphprompts import *  # Import prompts
+    async def should_continue_symptom_gathering(self, state: AgentState) -> str:
+        """Decides whether to continue gathering symptoms or proceed to relevance check."""
+        logger.info("🔄 Checking symptom gathering status...")
+        new_state = await self.graph_flow.gather_symptoms(state)
+        if new_state.get("final_response"):
+            logger.info("✅ Symptom gathering complete")
+            return END
+        else:
+            logger.info("➡️ Proceeding to relevance check")
+            return "check_triage_relevance"
 
-# --- Initialize the LLM instance (make sure it's defined correctly in utils.py) ---
-llm = load_llm()  # Initialize LLM here
+    async def route_based_on_relevance(self, state: AgentState) -> str:
+        """Routes based on symptom relevance."""
+        logger.info("🔄 Routing based on relevance...")
+        new_state = await self.graph_flow.check_triage_relevance(state)
+        is_relevant = new_state.get("is_relevant", False)
+        logger.info(f"➡️ Relevance: {is_relevant}")
+        
+        if is_relevant:
+            return "perform_final_analysis"
+        else:
+            return "handle_irrelevant_triage"
 
-# --- Define Route Functions (You can copy these from the previous answers) ---
+    async def route_based_on_evaluation(self, state: AgentState) -> str:
+        """Routes based on explanation evaluation."""
+        logger.info("🔄 Routing based on evaluation...")
+        new_state = await self.graph_flow.evaluate_explanation(state)
+        critique = new_state.get("evaluator_critique", "OK")
+        loop = state.get("loop_count", 0)
+        logger.info(f"➡️ Evaluation: {critique}, Loop: {loop}")
+        
+        if critique.upper().startswith("REVISE") and loop < self.MAX_REFINE_LOOPS:
+            return "refine_explanation"
+        else:
+            return "extract_specialist_and_doctors"
 
-def route_based_on_intent(state: AgentState) -> str:
-    intent = state.get("user_intent", "OFF_TOPIC")
-    if intent == "SYMPTOM_TRIAGE":
-        return "gather_symptoms"
-    elif intent == "MEDICAL_INFORMATION_REQUEST":
-        return "handle_info_request"
-    else:
-        return "handle_off_topic"
+    def build(self):
+        """Builds and compiles the graph with all nodes and edges."""
+        logger.info("🏗️ Building graph...")
+        
+        # Add all nodes
+        self.graph.add_node("classify_intent", self.graph_flow.classify_intent)
+        self.graph.add_node("gather_symptoms", self.graph_flow.gather_symptoms)
+        self.graph.add_node("check_triage_relevance", self.graph_flow.check_triage_relevance)
+        self.graph.add_node("handle_info_request", self.graph_flow.handle_info_request)
+        self.graph.add_node("handle_off_topic", self.graph_flow.handle_off_topic)
+        self.graph.add_node("handle_irrelevant_triage", self.graph_flow.handle_irrelevant_triage)
+        self.graph.add_node("perform_final_analysis", self.graph_flow.perform_final_analysis)
+        self.graph.add_node("evaluate_explanation", self.graph_flow.evaluate_explanation)
+        self.graph.add_node("refine_explanation", self.graph_flow.refine_explanation)
+        self.graph.add_node("extract_specialist_and_doctors", self.graph_flow.extract_specialist_and_doctors)
+        self.graph.add_node("prepare_final_output", self.graph_flow.prepare_final_output)
 
-def should_continue_symptom_gathering(state: AgentState) -> str:
-    if state.get("final_response"):
-        return END
-    else:
-        return "check_triage_relevance"
+        # Set entry point
+        self.graph.set_entry_point("classify_intent")
 
-def route_based_on_relevance(state: AgentState) -> str:
-    is_relevant = state.get("is_relevant", False)
-    if is_relevant:
-        return "perform_final_analysis"
-    else:
-        return "handle_irrelevant_triage"
+        # Add conditional edges
+        logger.info("🔗 Adding conditional edges...")
+        
+        # Intent-based routing
+        self.graph.add_conditional_edges(
+            "classify_intent",
+            self.route_based_on_intent,
+            {
+                "gather_symptoms": "gather_symptoms",
+                "handle_info_request": "handle_info_request",
+                "handle_off_topic": "handle_off_topic"
+            }
+        )
 
-def route_based_on_evaluation(state: AgentState) -> str:
-    critique = state.get("evaluator_critique", "OK")
-    loop = state.get("loop_count", 0)
-    if critique.upper().startswith("REVISE") and loop < MAX_REFINE_LOOPS:
-        return "refine_explanation"
-    else:
-        return "extract_specialist_and_doctors"
+        # Symptom gathering flow
+        self.graph.add_conditional_edges(
+            "gather_symptoms",
+            self.should_continue_symptom_gathering,
+            {
+                "check_triage_relevance": "check_triage_relevance",
+                END: END
+            }
+        )
 
-# --- Graph Construction ---
-def build_graph():
-    """
-    Builds the LangGraph workflow and defines nodes and edges.
-    This method organizes the flow of the conversation based on user intent.
-    """
-    if not llm:  # Ensure the LLM is loaded before building the graph
-        print("Error: LLM not loaded. Unable to build graph.")
-        return None
-    
-    print("Building LangGraph workflow...")
-    workflow = StateGraph(AgentState)  # Initialize the state graph for managing the agent's state
+        # Relevance-based routing
+        self.graph.add_conditional_edges(
+            "check_triage_relevance",
+            self.route_based_on_relevance,
+            {
+                "perform_final_analysis": "perform_final_analysis",
+                "handle_irrelevant_triage": "handle_irrelevant_triage"
+            }
+        )
 
-    print("Adding nodes to the graph...")
-    workflow.add_node("classify_intent", classify_intent_node)
-    workflow.add_node("gather_symptoms", gather_symptoms_node)
-    workflow.add_node("check_triage_relevance", check_triage_relevance_node)
-    workflow.add_node("handle_info_request", handle_info_request_node)
-    workflow.add_node("handle_off_topic", handle_off_topic_node)
-    workflow.add_node("handle_irrelevant_triage", handle_irrelevant_triage_node)
-    workflow.add_node("perform_final_analysis", perform_final_analysis_node)
-    workflow.add_node("evaluate_explanation", evaluate_explanation_node)
-    workflow.add_node("refine_explanation", refine_explanation_node)
-    workflow.add_node("extract_specialist_and_doctors", extract_specialist_and_doctors_node)
-    workflow.add_node("prepare_final_output", prepare_final_output_node)
+        # Analysis and evaluation flow
+        self.graph.add_edge("perform_final_analysis", "evaluate_explanation")
+        
+        # Evaluation-based routing
+        self.graph.add_conditional_edges(
+            "evaluate_explanation",
+            self.route_based_on_evaluation,
+            {
+                "extract_specialist_and_doctors": "extract_specialist_and_doctors",
+                "refine_explanation": "refine_explanation"
+            }
+        )
 
-    # Set the starting point of the graph (entry point for the conversation)
-    workflow.set_entry_point("classify_intent")
+        # Refinement loop
+        self.graph.add_edge("refine_explanation", "evaluate_explanation")
+        
+        # Final output preparation
+        self.graph.add_edge("extract_specialist_and_doctors", "prepare_final_output")
+        self.graph.add_edge("prepare_final_output", END)
 
-    print("Adding conditional edges between nodes...")
-    # Define the conditions for the transitions between nodes
-    workflow.add_conditional_edges("classify_intent", route_based_on_intent, {
-        "gather_symptoms": "gather_symptoms",
-        "handle_info_request": "handle_info_request",
-        "handle_off_topic": "handle_off_topic"
-    })
+        # Add direct end points
+        self.graph.add_edge("handle_info_request", END)
+        self.graph.add_edge("handle_off_topic", END)
+        self.graph.add_edge("handle_irrelevant_triage", END)
 
-    workflow.add_conditional_edges("gather_symptoms", should_continue_symptom_gathering, {
-        "check_triage_relevance": "check_triage_relevance",
-        END: END  # End the flow if gathering symptoms is complete
-    })
+        logger.info("✅ Graph built successfully")
+        return self.graph.compile()
 
-    workflow.add_conditional_edges("check_triage_relevance", route_based_on_relevance, {
-        "perform_final_analysis": "perform_final_analysis",
-        "handle_irrelevant_triage": "handle_irrelevant_triage"
-    })
-
-    workflow.add_edge("perform_final_analysis", "evaluate_explanation")
-
-    workflow.add_conditional_edges("evaluate_explanation", route_based_on_evaluation, {
-        "extract_specialist_and_doctors": "extract_specialist_and_doctors",
-        "refine_explanation": "refine_explanation"
-    })
-
-    workflow.add_edge("refine_explanation", "evaluate_explanation")
-    workflow.add_edge("extract_specialist_and_doctors", "prepare_final_output")
-    workflow.add_edge("prepare_final_output", END)  # End the conversation after preparation
-
-    # Adding final endpoints (if necessary)
-    workflow.add_edge("handle_info_request", END)
-    workflow.add_edge("handle_off_topic", END)
-    workflow.add_edge("handle_irrelevant_triage", END)
-
-    print("Compiling the graph...")
-    compiled_graph = workflow.compile()  # Compile the graph after all nodes and edges are defined
-    print("LangGraph compiled successfully.")
-
-    return compiled_graph  # Return the compiled graph
-
-
-# Optional main block for testing graph build standalone (only useful when running independently)
+# Optional main block for testing
 if __name__ == '__main__':
-    print("\nTesting graph builder standalone...")
+    logger.info("🧪 Testing graph builder...")
     try:
-        if not llm: print("LLM missing, build check might fail.")
-        graph_app_test = build_graph()  # Test the graph build function
-        if graph_app_test: print("\nStandalone build check successful!")
-        else: print("\nStandalone build check resulted in None graph app.")
+        graph_flow = GraphFlow(AgentState())
+        graph = Graph(graph_flow)
+        compiled_graph = graph.build()
+        if compiled_graph:
+            logger.info("✅ Graph compilation successful!")
+        else:
+            logger.error("❌ Graph compilation failed")
     except Exception as e:
-        print(f"\nError during standalone graph build test: {e}")
-        traceback.print_exc()  # Show error details if any
+        logger.error(f"❌ Error during graph build test: {e}")
+        import traceback
+        traceback.print_exc()
+
+# Create and export the graph instance
+graph_flow = GraphFlow(AgentState())
+graph = Graph(graph_flow)
+compiled_graph = graph.build()
+
+# Export the compiled graph
+__all__ = ['graph']
