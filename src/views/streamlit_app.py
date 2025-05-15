@@ -16,7 +16,11 @@ import io # Needed to read image bytes
 import requests
 import json
 from stores.langgraph.scheme.state import AgentState
-
+from stores.langgraph.utils import (
+    load_embedding_model, load_llm,
+    load_icd_data_and_embeddings, load_dataframes, load_specialist_list
+)
+from stores.langgraph.graph import Graph
 
 # --- Must be first Streamlit command ---
 st.set_page_config(page_title="AI Symptom checker", layout="wide")
@@ -26,13 +30,7 @@ load_dotenv()
 BASE_URL = os.getenv("FASTAPI_URL", "http://localhost:5000")
 
 # --- Now safe to import custom modules & utils ---
-from stores.langgraph.utils import (
-    load_embedding_model, load_llm, load_vector_store,
-    load_icd_data_and_embeddings, load_dataframes, load_specialist_list
-)
-# Import the graph builder and build the graph app
-# This should be called only once if possible
-from graph_builder import build_graph
+
 
 # --- NLTK Download ---
 try:
@@ -47,7 +45,6 @@ except Exception as e:
 print("Loading application components...")
 embedding_model = load_embedding_model()
 llm = load_llm()
-vector_store = load_vector_store(embedding_model)
 icd_codes_g, icd_embeddings_g = load_icd_data_and_embeddings(embedding_model)
 doctor_df_g, cases_df_g = load_dataframes()
 specialist_list_g = load_specialist_list()
@@ -58,22 +55,29 @@ print("Finished loading application components.")
 def get_compiled_graph():
     """Builds or retrieves the compiled LangGraph agent."""
     print("Attempting to build/retrieve compiled LangGraph agent...")
-    if llm and embedding_model and vector_store and specialist_list_g:
+    if llm and embedding_model and specialist_list_g:
         try:
-            compiled_app = build_graph()
+            # Instantiate GraphFlow and Graph, then build
+            from stores.langgraph.graphFlow import GraphFlow
+            graph_flow = GraphFlow(AgentState())
+            graph = Graph(graph_flow)
+            compiled_app = graph.build()
             if compiled_app:
-                 print("LangGraph agent compiled successfully.")
-                 return compiled_app
+                print("LangGraph agent compiled successfully.")
+                return compiled_app
             else:
-                 st.error("Graph building function returned None.")
-                 return None
+                st.error("Graph building function returned None.")
+                return None
         except Exception as e:
             st.error(f"Failed to build the agent workflow graph: {e}")
             print(f"CRITICAL: Graph build failed: {e}")
             traceback.print_exc()
             return None
     else:
-        missing_comps = [comp for comp, name in zip([llm, embedding_model, vector_store, specialist_list_g], ['LLM', 'Embeddings', 'VectorStore', 'SpecialistList']) if comp is None]
+        missing_comps = [name for comp, name in zip(
+            [llm, embedding_model, specialist_list_g],
+            ['LLM', 'Embeddings', 'SpecialistList']
+        ) if comp is None]
         error_msg = f"Core components ({', '.join(missing_comps)}) failed to load earlier. Agent cannot be built."
         st.error(error_msg)
         print(error_msg)
@@ -83,8 +87,6 @@ graph_app = get_compiled_graph()
 
 # --- Streamlit UI Elements ---
 st.title("🩺 AI Symptom Checker")
-
-
 
 #st.warning("Disclaimer: This is a prototype AI for informational purposes only. It cannot provide diagnosis or medical advice. Visual analysis is experimental. Always consult with a qualified healthcare professional.")
 
@@ -98,10 +100,9 @@ if 'agent_final_state' not in st.session_state:
     st.session_state.agent_final_state = None
 
 if 'agent_input_history' not in st.session_state:
-     st.session_state.agent_input_history = []
-     if st.session_state.messages and st.session_state.messages[0]['role'] == 'assistant':
-         st.session_state.agent_input_history.append(st.session_state.messages[0])
-
+    st.session_state.agent_input_history = []
+    if st.session_state.messages and st.session_state.messages[0]['role'] == 'assistant':
+        st.session_state.agent_input_history.append(st.session_state.messages[0])
 
 # --- Display Chat Interface ---
 chat_container = st.container(height=450, border=True)
@@ -116,7 +117,6 @@ with chat_container:
                  #st.image(message["content"]["image_bytes"], caption="Uploaded Image", width=200)
                  #if message["content"].get("text"): # Display accompanying text if any
                      #st.markdown(message["content"]["text"])
-
 
 # --- Separate Display Area for Results (Table, Expander) ---
 results_container = st.container()
@@ -246,8 +246,10 @@ if prompt:
 
         # Add agent's response (or error) to display history
         if agent_response:
-            st.session_state.messages.append({"role": "assistant", "content": agent_response})
-            st.session_state.agent_input_history.append({"role": "assistant", "content": agent_response})
+            # Only append if not a duplicate of the last message
+            if not (st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant" and st.session_state.messages[-1]["content"] == agent_response):
+                st.session_state.messages.append({"role": "assistant", "content": agent_response})
+                st.session_state.agent_input_history.append({"role": "assistant", "content": agent_response})
         elif graph_app and final_state is None: # Error during invoke
              error_msg = f"An error occurred during processing: Check logs." # Already printed traceback
              st.session_state.messages.append({"role": "assistant", "content": error_msg})

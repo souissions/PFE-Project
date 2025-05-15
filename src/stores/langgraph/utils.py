@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import traceback
@@ -50,8 +50,7 @@ def load_llm():
     try:
         llm = ChatGoogleGenerativeAI(
             model=LLM_MODEL_NAME,
-            google_api_key=api_key,
-            convert_system_message_to_human=True  # Helps manage conversation flow
+            google_api_key=api_key
         )
         try:
             test_result = llm.invoke("Hello!")

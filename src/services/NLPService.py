@@ -4,7 +4,7 @@ from stores.llm.LLMEnums import DocumentTypeEnum
 from typing import List, Dict, Any, Optional
 import json
 import logging
-from stores.langgraph.graph import graph
+from stores.langgraph.graph import graph, compiled_graph
 from stores.langgraph.scheme.state import AgentState
 
 logger = logging.getLogger('uvicorn.error')
@@ -144,14 +144,38 @@ class NLPService(BaseService):
 
         return answer, full_prompt, chat_history
     
+    @staticmethod
+    def normalize_intent_output(output: str) -> str:
+        """Robustly extract the intent label from LLM output."""
+        import re
+        allowed_intents = [
+            "SYMPTOM_TRIAGE",
+            "MEDICAL_INFORMATION_REQUEST",
+            "OFF_TOPIC"
+        ]
+        # Search for allowed intent as a whole word (case-insensitive)
+        for intent in allowed_intents:
+            pattern = r"\\b" + re.escape(intent) + r"\\b"
+            if re.search(pattern, output, re.IGNORECASE):
+                return intent
+        # Fallback: try to extract a single word matching any allowed intent (case-insensitive)
+        output_upper = output.upper()
+        for intent in allowed_intents:
+            if intent in output_upper:
+                return intent
+        # Fallback: return OFF_TOPIC
+        return "OFF_TOPIC"
+
     async def classify_intent(self, text: str) -> Dict[str, Any]:
         """Classify user intent using LangGraph."""
         try:
             state = AgentState(user_input=text)
             result = await graph._classify_intent(state)
+            raw_intent = getattr(result.intent_classification, "intent", "")
+            normalized_intent = self.normalize_intent_output(str(raw_intent))
             return {
-                "intent": result.intent_classification.intent,
-                "confidence": result.intent_classification.confidence
+                "intent": normalized_intent,
+                "confidence": getattr(result.intent_classification, "confidence", None)
             }
         except Exception as e:
             logger.error(f"Error in intent classification: {e}")
@@ -202,11 +226,11 @@ class NLPService(BaseService):
         """Evaluate explanation quality."""
         try:
             state = AgentState()
-            state.final_analysis.analysis = explanation
+            state["initial_explanation"] = explanation
             result = await graph._evaluate_explanation(state)
             return {
-                "needs_refinement": result.explanation_evaluation["needs_refinement"],
-                "confidence": result.explanation_evaluation["confidence"]
+                "needs_refinement": result.get("needs_refinement"),
+                "confidence": result.get("confidence")
             }
         except Exception as e:
             logger.error(f"Error in explanation evaluation: {e}")
@@ -240,7 +264,27 @@ class NLPService(BaseService):
         """Run the complete LangGraph flow."""
         try:
             logger.info("Starting LangGraph flow...")
-            result = await graph.run(query)
+            # Build a full AgentState dict as required by the graph
+            state = {
+                "conversation_history": [],
+                "user_query": query,
+                "uploaded_image_bytes": image_bytes,
+                "image_prompt_text": None,
+                "user_intent": None,
+                "accumulated_symptoms": "",
+                "is_relevant": None,
+                "loop_count": 0,
+                "rag_context": None,
+                "matched_icd_codes": None,
+                "initial_explanation": None,
+                "evaluator_critique": None,
+                "final_explanation": None,
+                "recommended_specialist": None,
+                "doctor_recommendations": None,
+                "no_doctors_found_specialist": None,
+                "final_response": None
+            }
+            result = await compiled_graph.ainvoke(state)
             logger.info("LangGraph flow completed successfully")
             return result
         except Exception as e:

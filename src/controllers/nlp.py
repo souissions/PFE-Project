@@ -206,36 +206,6 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
             "chat_history": chat_history
         }
     )
-@nlp_router.post("/triage/{project_id}")
-async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
-
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-
-    nlp_controller = NLPService(
-        vectordb_client=request.app.vectordb_client,
-        generation_client=request.app.generation_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
-
-    result = await nlp_controller.run_langgraph_flow(query=search_request.text)
-
-    if not result or "final_response" not in result:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value}
-        )
-
-    return JSONResponse(
-        content={
-            "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
-            "response": result["final_response"],
-            "state": result  # full debug info
-        }
-    )
 
 @nlp_router.post("/intent/classify")
 async def classify_intent(request: Request, text: str):
@@ -274,6 +244,40 @@ async def check_relevance(request: Request, text: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": str(e)}
         )
+    
+    
+@nlp_router.post("/triage/{project_id}")
+async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
+
+    project_model = await ProjectModel.create_instance(
+        db_client=request.app.db_client
+    )
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+
+    nlp_controller = NLPService(
+        vectordb_client=request.app.vectordb_client,
+        generation_client=request.app.generation_client,
+        embedding_client=request.app.embedding_client,
+        template_parser=request.app.template_parser,
+    )
+
+    result = await nlp_controller.run_langgraph_flow(query=search_request.text)
+
+    if not result or "final_response" not in result:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value}
+        )
+
+    return JSONResponse(
+        content={
+            "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
+            "response": result["final_response"],
+            "state": result  # full debug info
+        }
+    )
+
+
 
 @nlp_router.post("/info/process")
 async def process_information(request: Request, query: str, docs: list, web_results: list):

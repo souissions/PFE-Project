@@ -49,16 +49,19 @@ class Tools:
         else:
             logger.info("✅ Google API credentials loaded")
 
-    @tool
     def retrieve_relevant_documents(self, user_symptoms: str) -> str:
         """Retrieves relevant documents from the RAG backend based on user symptoms."""
         logger.info("📚 Retrieving relevant documents...")
         logger.debug(f"Input: '{user_symptoms[:100]}...'")
 
         try:
+            # Use hardcoded values for PROJECT_ID and limit to avoid settings issues
+            project_id = 1  # Hardcoded project ID
+            limit = 3       # Hardcoded limit (RAG_K)
+            
             response = requests.post(
-                f"{self.settings.FASTAPI_URL}/api/v1/nlp/index/answer/{self.settings.PROJECT_ID}",
-                json={"text": user_symptoms, "limit": self.settings.RAG_K},
+                f"{self.settings.FASTAPI_URL}/api/v1/nlp/index/answer/{project_id}",
+                json={"text": user_symptoms, "limit": limit},
                 timeout=10
             )
             response.raise_for_status()
@@ -75,15 +78,14 @@ class Tools:
         except Exception as e:
             error_msg = f"Unexpected error in document retrieval: {e}"
             logger.error(f"❌ {error_msg}")
-            return error_msg
-
-    @tool
-    def match_relevant_icd_codes(self, text: str) -> List[str]:
-        """Match text against ICD codes using embeddings."""
         try:
+            if not text:
+                logger.error("Empty text provided for ICD code matching")
+                return []
+                
             response = requests.post(
                 f"{self.settings.FASTAPI_URL}/api/v1/icd/match",
-                json={"text": text, "top_n": self.settings.ICD_TOP_N}
+                json={"text": text, "top_n": 5}  # Hardcoded top_n to avoid settings issue
             )
             if response.status_code == 200:
                 return response.json()
@@ -147,7 +149,8 @@ class Tools:
                 matched.append(f"{code} (Similarity: {score:.2f})")
         return matched
 
-# Create a singleton instance
+# Instantiate and expose a module-level Tools object for import convenience
+
 tools = Tools()
 
 # Export the tools for use in other modules

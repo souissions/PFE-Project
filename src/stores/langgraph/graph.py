@@ -16,12 +16,15 @@ class Graph:
         self.graph = StateGraph(AgentState)
         self.MAX_REFINE_LOOPS = 2
 
+    async def classify_intent(self, state: AgentState):
+        return await self.graph_flow.classify_intent(state)
+
     # Define conditional edge handlers that correctly return the routing decision
     async def route_based_on_intent(self, state: AgentState) -> str:
         """Routes based on user intent classification."""
         logger.info("🔄 Routing based on intent...")
         new_state = await self.graph_flow.classify_intent(state)
-        intent = new_state.get("user_intent", "OFF_TOPIC")
+        intent = new_state.get("intent", "OFF_TOPIC")  # <-- Use correct key
         logger.info(f"➡️ Routed to: {intent}")
         
         if intent == "SYMPTOM_TRIAGE":

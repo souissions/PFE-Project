@@ -9,9 +9,7 @@ class Settings(BaseSettings):
 
     # Paths for datasets and vector stores
     DATA_FOLDER: str
-    DB_FAISS_PATH: str
     ICD_CSV_PATH: str
-    ICD_CACHE_PATH: str
     PATIENT_CASES_PATH: str
     SPECIALIST_LIST_PATH: str
 

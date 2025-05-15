@@ -1,28 +1,19 @@
 import logging
+import re
 from typing import Dict, Any
-from stores.langgraph import tools
+from stores.langgraph.tools import tools
 from stores.llm.templates.template_parser import TemplateParser
 from stores.langgraph.utils import load_llm
 from stores.langgraph.scheme.state import AgentState
-from stores.langgraph.scheme.models import (
-    IntentClassifierInput, IntentClassifierOutput,
-    SymptomGathererInput, SymptomGathererOutput,
-    RelevanceCheckerInput, RelevanceCheckerOutput,
-    InfoRequestHandlerInput, InfoRequestHandlerOutput,
-    OffTopicHandlerInput, OffTopicHandlerOutput,
-    IrrelevantTriageHandlerInput, IrrelevantTriageHandlerOutput,
-    FinalAnalysisInput, FinalAnalysisOutput,
-    ExplanationEvaluatorInput, ExplanationEvaluatorOutput,
-    ExplanationRefinerInput, ExplanationRefinerOutput,
-    SpecialistRecommenderInput, SpecialistRecommenderOutput,
-    FinalOutputPreparerInput, FinalOutputPreparerOutput
-)
+from stores.langgraph.scheme.models import IntentQuery
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 import base64
 import json
 from langchain.schema import HumanMessage
+
+from stores.llm.templates.locales.en.intent_classifier import normalize_intent_output
 
 logger = logging.getLogger("uvicorn")
 
@@ -53,23 +44,22 @@ class GraphFlow:
     async def classify_intent(self, state: AgentState) -> Dict[str, Any]:
         """Classify user intent based on conversation history and latest query."""
         try:
-            # Prepare input for intent classification
+            logger.info(f"[DEBUG] classify_intent input: conversation_history={state['conversation_history']}, user_query={state['user_query']}")
             input_data = {
-                "conversation_history": state.conversation_history,
-                "user_query": state.user_query
+                "conversation_history": state["conversation_history"],
+                "user_query": state["user_query"]
             }
-            
             # Run intent classification
             result = await self.intent_chain.ainvoke(input_data)
-            intent = result.content.strip()
-            
-            # Update state with intent
-            state.intent = intent
-            return {"intent": intent}
-            
+            logger.info(f"[DEBUG] classify_intent raw result: {result}")
+            # Use robust normalization for intent extraction
+            intent_label = normalize_intent_output(result.content)
+            logger.info(f"[DEBUG] classify_intent extracted intent: {intent_label}")
+            state["intent"] = intent_label
+            return {"intent": intent_label}
         except Exception as e:
             logger.error(f"Error in classify_intent: {e}")
-            state.intent = "UNKNOWN"
+            state["intent"] = "UNKNOWN"
             return {"intent": "UNKNOWN"}
 
     async def gather_symptoms(self, state: AgentState) -> Dict[str, Any]:
@@ -77,8 +67,8 @@ class GraphFlow:
         try:
             # Prepare input for symptom analysis
             input_data = {
-                "accumulated_symptoms": state.accumulated_symptoms,
-                "user_query": state.user_query
+                "accumulated_symptoms": state["accumulated_symptoms"],
+                "user_query": state["user_query"]
             }
             
             # Run symptom analysis
@@ -86,12 +76,12 @@ class GraphFlow:
             symptoms = result.content.strip()
             
             # Update state with new symptoms
-            state.accumulated_symptoms = symptoms
+            state["accumulated_symptoms"] = symptoms
             return {"symptoms": symptoms}
             
         except Exception as e:
             logger.error(f"Error in gather_symptoms: {e}")
-            return {"symptoms": state.accumulated_symptoms}
+            return {"symptoms": state["accumulated_symptoms"]}
 
     async def check_triage_relevance(self, state: AgentState) -> Dict[str, Any]:
         """Checks if the accumulated symptoms are medically relevant."""
@@ -124,8 +114,8 @@ class GraphFlow:
                 uploaded_image_bytes=None
             ).dict()
 
-        context = tools.retrieve_relevant_documents.invoke({"user_symptoms": input_data.user_query})
-        icd_codes = tools.match_relevant_icd_codes.invoke({"user_symptoms": input_data.user_query})
+        context = tools.retrieve_relevant_documents(input_data.user_query)
+        icd_codes = tools.match_relevant_icd_codes(input_data.user_query)
 
         response_content = f"Context: {context}\nICD Codes: {icd_codes}"
         logger.info("✅ Information request handled")
@@ -145,8 +135,8 @@ class GraphFlow:
             uploaded_image_bytes=state.get('uploaded_image_bytes')
         )
         
-        context = tools.retrieve_relevant_documents.invoke({"user_symptoms": input_data.accumulated_symptoms})
-        icd_codes = tools.match_relevant_icd_codes.invoke({"user_symptoms": input_data.accumulated_symptoms})
+        context = tools.retrieve_relevant_documents(input_data.accumulated_symptoms)
+        icd_codes = tools.match_relevant_icd_codes(input_data.accumulated_symptoms)
 
         logger.info("✅ Final analysis completed")
         return FinalAnalysisOutput(
