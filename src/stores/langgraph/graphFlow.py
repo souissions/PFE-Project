@@ -6,14 +6,14 @@ from stores.llm.templates.template_parser import TemplateParser
 from stores.langgraph.utils import load_llm
 from stores.langgraph.scheme.state import AgentState
 from stores.langgraph.scheme.models import IntentQuery
+from stores.langgraph.scheme.models.relevance_checker import RelevanceCheckerInput, RelevanceCheckerOutput
+from stores.llm.templates.locales.en.relevance_check import relevance_check_prompt
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 import base64
 import json
 from langchain.schema import HumanMessage
-
-from stores.llm.templates.locales.en.intent_classifier import normalize_intent_output
 
 logger = logging.getLogger("uvicorn")
 
@@ -24,8 +24,9 @@ class GraphFlow:
         self.llm = load_llm()
         
         # Initialize prompts
-        self.intent_prompt_str = self.parser.get("intent_classifier", "intent_classifier_system")
+        self.intent_prompt_str = self.parser.get("intent_classifier", "intent_classifier_prompt")
         self.followup_prompt_str = self.parser.get("followup", "followup_system")
+        self.relevance_check_prompt = relevance_check_prompt
         
         # Initialize LangChain components
         self.intent_prompt = PromptTemplate(
@@ -53,7 +54,7 @@ class GraphFlow:
             result = await self.intent_chain.ainvoke(input_data)
             logger.info(f"[DEBUG] classify_intent raw result: {result}")
             # Use robust normalization for intent extraction
-            intent_label = normalize_intent_output(result.content)
+            intent_label = result.content.strip().upper()
             logger.info(f"[DEBUG] classify_intent extracted intent: {intent_label}")
             state["intent"] = intent_label
             return {"intent": intent_label}
@@ -84,17 +85,28 @@ class GraphFlow:
             return {"symptoms": state["accumulated_symptoms"]}
 
     async def check_triage_relevance(self, state: AgentState) -> Dict[str, Any]:
-        """Checks if the accumulated symptoms are medically relevant."""
+        """Checks if the accumulated symptoms are medically relevant using a LangChain prompt."""
         logger.info("🔍 Checking triage relevance...")
-        
-        input_data = RelevanceCheckerInput(
-            accumulated_symptoms=state.get('accumulated_symptoms', '')
-        )
-        
-        # TODO: Implement proper relevance check
-        is_relevant = True
-        
-        logger.info(f"🔍 Triage relevance: {is_relevant}")
+        accumulated_symptoms = state.get('accumulated_symptoms', '')
+        # Format the prompt string
+        prompt_str = self.relevance_check_prompt.format(accumulated_symptoms=accumulated_symptoms)
+        # Call the LLM directly
+        llm_result = await self.llm.ainvoke(prompt_str)
+        # Handle Gemini/OpenAI output
+        answer = None
+        if hasattr(llm_result, 'content'):
+            answer = llm_result.content.strip().upper()
+        elif hasattr(llm_result, 'text'):
+            answer = llm_result.text.strip().upper()
+        elif isinstance(llm_result, dict):
+            if 'content' in llm_result:
+                answer = str(llm_result['content']).strip().upper()
+            elif 'text' in llm_result:
+                answer = str(llm_result['text']).strip().upper()
+        else:
+            answer = str(llm_result).strip().upper()
+        is_relevant = answer.startswith("YES")
+        logger.info(f"🔍 Triage relevance: {is_relevant} (LLM answer: {answer})")
         return RelevanceCheckerOutput(is_relevant=is_relevant).dict()
 
     async def handle_info_request(self, state: AgentState) -> Dict[str, Any]:

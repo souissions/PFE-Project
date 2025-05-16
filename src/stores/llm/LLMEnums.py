@@ -4,6 +4,7 @@ class LLMEnums(Enum):
     OPENAI = "OPENAI"
     COHERE = "COHERE"
     GOOGLE = "GOOGLE"  
+    HUGGINGFACE = "HUGGINGFACE"
 
 # Add Google specific enums if needed
 class GoogleEnums(Enum):
@@ -30,5 +31,12 @@ class CoHereEnums(Enum):
 
 
 class DocumentTypeEnum(Enum):
+    DOCUMENT = "document"
+    QUERY = "query"
+
+class HuggingFaceEnums(Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
     DOCUMENT = "document"
     QUERY = "query"

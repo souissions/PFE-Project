@@ -19,6 +19,10 @@ class Graph:
     async def classify_intent(self, state: AgentState):
         return await self.graph_flow.classify_intent(state)
 
+    async def check_relevance(self, state: AgentState):
+        """Public method to check triage relevance using GraphFlow."""
+        return await self.graph_flow.check_triage_relevance(state)
+
     # Define conditional edge handlers that correctly return the routing decision
     async def route_based_on_intent(self, state: AgentState) -> str:
         """Routes based on user intent classification."""

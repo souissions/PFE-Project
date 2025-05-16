@@ -1,5 +1,4 @@
 from string import Template
-from .base_prompts import system_prompt, document_prompt, footer_prompt
 
 rag_relevance_system = Template("\n".join([
     "You are an AI specialized in evaluating the relevance of retrieved context for answering user questions.",

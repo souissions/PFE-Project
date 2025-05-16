@@ -1,57 +1,28 @@
 from string import Template
-import re
+from langchain_core.prompts import PromptTemplate
 
-#### System Prompt ####
-system_prompt = Template("\n".join([
-    "You are a classification assistant.",
-    "Your task is to determine the primary intent of the user's latest input.",
-    "The input may include both text and an image.",
-    "Use the conversation history for context, if needed.",
-    "Only respond with one of the predefined intent labels.",
-    "Prioritize SYMPTOM_TRIAGE if the user input (text or image) indicates a medical concern.",
-]))
+# --- Intent Classifier Prompt Template (LangChain compatible) ---
+intent_classifier_template = """
+Analyze the latest user input, which may include text and/or an image, in the context of the conversation history. Classify the primary intent of the *latest user input*.
 
-#### Document Prompt ####
-chat_history_prompt = Template("\n".join([
-    "### Conversation History:",
-    "$conversation_history",
-    "",
-]))
+Conversation History (may include text and image references):
+{conversation_history}
 
-#### Footer Prompt ####
-footer_prompt = Template("\n".join([
-    "### Latest User Input Text:",
-    "$user_query",
-    "",
-    "(Note: An image may also have been provided along with the text.)",
-    "",
-    "### Possible Intents:",
-    "- SYMPTOM_TRIAGE: User is describing medical symptoms or visual issues (e.g., rash, injury).",
-    "- MEDICAL_INFORMATION_REQUEST: User is seeking factual medical information or advice not tied to personal symptoms.",
-    "- OFF_TOPIC: User's query/image is unrelated to medical concerns (e.g., general knowledge, greetings).",
-    "",
-    "Classify the *intent of the latest user input* using ONLY one of the following labels:",
-    "SYMPTOM_TRIAGE",
-    "MEDICAL_INFORMATION_REQUEST",
-    "OFF_TOPIC",
-    "",
-    "Intent:"
-]))
+Latest User Input Text: {user_query}
+(An image may also have been provided simultaneously with this text query).
 
-# For compatibility: alias for legacy code expecting 'intent_classifier_system', 'intent_classifier_document', 'intent_classifier_footer'
-intent_classifier_system = system_prompt
-intent_classifier_document = chat_history_prompt
-intent_classifier_footer = footer_prompt
+Possible Intents:
+- SYMPTOM_TRIAGE: User is describing medical symptoms, health complaints (textually or visually in an image), or asking for help identifying a potential issue. Prioritize this if an image shows a clear medical concern (rash, injury, etc.) even if text is minimal.
+- OFF_TOPIC: User query/image is unrelated to medical symptoms or information (e.g., greetings, politics, general knowledge, non-medical images).
 
-def normalize_intent_output(raw: str) -> str:
-    """Robustly extract the intent label from LLM output, inspired by the working logic in your friend's graph_builder.py."""
-    raw = raw.strip().upper()
-    # Accept only exact valid labels if present
-    valid_intents = ["SYMPTOM_TRIAGE", "MEDICAL_INFORMATION_REQUEST", "OFF_TOPIC"]
-    for intent in valid_intents:
-        # Match as a whole word (not substring)
-        if re.search(rf"\b{intent}\b", raw):
-            return intent
-    # Fallback: if LLM output is not a valid label, default to OFF_TOPIC
-    return "OFF_TOPIC"
+Classify the intent of the *latest user input (text and/or image)*. Respond with only ONE of the intent labels:
+SYMPTOM_TRIAGE
+MEDICAL_INFORMATION_REQUEST
+OFF_TOPIC
+Intent:"""
+
+intent_classifier_prompt = PromptTemplate(
+    template=intent_classifier_template,
+    input_variables=["conversation_history", "user_query"]
+)
 

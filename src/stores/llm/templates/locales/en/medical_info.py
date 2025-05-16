@@ -1,5 +1,4 @@
 from string import Template
-from .base_prompts import system_prompt, document_prompt, footer_prompt
 
 medical_info_system = Template("\n".join([
     "You are an AI assistant providing information based only on the provided medical knowledge base.",

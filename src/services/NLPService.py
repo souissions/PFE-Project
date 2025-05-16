@@ -170,7 +170,7 @@ class NLPService(BaseService):
         """Classify user intent using LangGraph."""
         try:
             state = AgentState(user_input=text)
-            result = await graph._classify_intent(state)
+            result = await graph.classify_intent(state)
             raw_intent = getattr(result.intent_classification, "intent", "")
             normalized_intent = self.normalize_intent_output(str(raw_intent))
             return {
@@ -185,7 +185,7 @@ class NLPService(BaseService):
         """Check if the case is relevant for triage."""
         try:
             state = AgentState(user_input=text)
-            result = await graph._check_relevance(state)
+            result = await graph.check_relevance(state)
             return {
                 "is_relevant": result.relevance_check.is_relevant,
                 "confidence": result.relevance_check.confidence

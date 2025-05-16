@@ -1,54 +1,22 @@
-from string import Template
-from .base_prompts import system_prompt, document_prompt, footer_prompt
+from langchain_core.prompts import PromptTemplate
 
-relevance_check_system = Template("\n".join([
-    "You are an AI assistant specialized in evaluating the medical relevance of conversations.",
-    "Your role is to determine if the conversation is focused on personal medical symptoms and health conditions.",
-    "Focus on identifying if the discussion is primarily about seeking medical guidance.",
-    "Consider both text and image inputs in your evaluation.",
-]))
+# --- Triage Relevance Check (Updated for potential image, with few-shot examples) ---
+relevance_check_template = """
+Analyze the following accumulated symptom description from a user chat. The user might have also provided images during the conversation, although only the text is summarized here.
+---
+{accumulated_symptoms}
+---
+Based on the accumulated TEXT description, is this conversation primarily focused on discussing personal medical symptoms, health conditions, or seeking medical guidance related to personal health?
+If the text is about pets, hobbies, greetings, or anything not related to personal health, answer 'NO'.
+Examples:
+Input: "I have a headache and fever." → YES
+Input: "Can you tell me about the history of the stethoscope?" → NO
+Input: "I have cats." → NO
+Input: "My chest hurts and I feel dizzy." → YES
 
-relevance_check_document = Template(
-    "\n".join([
-        "## Accumulated Symptom Description:",
-        "$accumulated_symptoms",
-    ])
+Respond with only the word 'YES' or 'NO'.
+Relevance:"""
+relevance_check_prompt = PromptTemplate(
+    template=relevance_check_template,
+    input_variables=["accumulated_symptoms"]
 )
-
-relevance_check_footer = Template("\n".join([
-    "Based on the accumulated description, determine if this conversation is primarily focused on:",
-    "1. Personal medical symptoms",
-    "2. Health conditions",
-    "3. Seeking medical guidance related to personal health",
-    "",
-    "Respond with only the word 'YES' or 'NO'.",
-    "Relevance:",
-]))
-
-symptom_sufficiency_system = Template("\n".join([
-    "You are an AI assistant specialized in evaluating the completeness of symptom descriptions.",
-    "Your role is to determine if there is enough specific detail to make a preliminary assessment.",
-    "Focus on identifying if key symptom characteristics are present.",
-    "Consider both text and image inputs in your evaluation.",
-]))
-
-symptom_sufficiency_document = Template(
-    "\n".join([
-        "## Accumulated Symptom Description:",
-        "$accumulated_symptoms",
-    ])
-)
-
-symptom_sufficiency_footer = Template("\n".join([
-    "Based on the accumulated description, determine if there is enough specific detail about:",
-    "1. Nature of symptoms",
-    "2. Location",
-    "3. Severity",
-    "4. Duration",
-    "5. Onset",
-    "6. Triggers",
-    "7. Associated factors",
-    "",
-    "Respond with only the word 'YES' or 'NO'.",
-    "Sufficient Information:",
-])) 

@@ -18,7 +18,7 @@ nlp_router = APIRouter(
     tags=["api_v1", "nlp"],
 )
 
-@nlp_router.post("/index/push/{project_id}")
+@nlp_router.post("/index/push/{project_id}", summary="Index project data into the vector database", description="Pushes all project chunks into the vector database for retrieval-augmented generation. Receives a project_id and a PushRequest (with do_reset flag). Returns the number of inserted items.")
 async def index_project(request: Request, project_id: int, push_request: PushRequest):
 
     project_model = await ProjectModel.create_instance(
@@ -102,7 +102,7 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
         }
     )
 
-@nlp_router.get("/index/info/{project_id}")
+@nlp_router.get("/index/info/{project_id}", summary="Get vector index info for a project", description="Retrieves metadata about the project's vector database collection, such as collection name and stats. Receives a project_id. Returns collection info.")
 async def get_project_index_info(request: Request, project_id: int):
     
     project_model = await ProjectModel.create_instance(
@@ -129,7 +129,7 @@ async def get_project_index_info(request: Request, project_id: int):
         }
     )
 
-@nlp_router.post("/index/search/{project_id}")
+@nlp_router.post("/index/search/{project_id}", summary="Semantic search in project index", description="Performs a semantic search over the project's indexed data. Receives a project_id and a SearchRequest (with text and limit). Returns a list of matching results.")
 async def search_index(request: Request, project_id: int, search_request: SearchRequest):
     
     project_model = await ProjectModel.create_instance(
@@ -166,7 +166,7 @@ async def search_index(request: Request, project_id: int, search_request: Search
         }
     )
 
-@nlp_router.post("/index/answer/{project_id}")
+@nlp_router.post("/index/answer/{project_id}", summary="RAG answer from project index", description="Answers a question using retrieval-augmented generation over the project's indexed data. Receives a project_id and a SearchRequest (with text and limit). Returns the answer, full prompt, and chat history.")
 async def answer_rag(request: Request, project_id: int, search_request: SearchRequest):
     
     project_model = await ProjectModel.create_instance(
@@ -207,16 +207,17 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
         }
     )
 
-@nlp_router.post("/intent/classify")
+@nlp_router.post("/intent/classify", summary="Classify user intent", description="Classifies the intent of a user query. Receives a text string. Returns the intent label: SYMPTOM_TRIAGE (user describes symptoms or health complaints), MEDICAL_INFORMATION_REQUEST (user asks for medical info),OFF_TOPIC (query is unrelated to medical topics)")
 async def classify_intent(request: Request, text: str):
     """Classify user intent."""
     try:
-        state = AgentState(user_input=text)
-        result = await graph._classify_intent(state)
+        # Ensure both user_query and conversation_history are set
+        state = AgentState(user_query=text, conversation_history="")
+        result = await graph.classify_intent(state)
         return JSONResponse(
             content={
-                "intent": result.intent_classification.intent,
-                "confidence": result.intent_classification.confidence
+                "intent": result.get("intent", "OFF_TOPIC"),
+                "confidence": result.get("confidence")
             }
         )
     except Exception as e:
@@ -225,17 +226,35 @@ async def classify_intent(request: Request, text: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": str(e)}
         )
+    
+@nlp_router.post("/symptoms/gather", summary="Extract symptoms from user input", description="Extracts and accumulates symptoms from a user query. Receives user_query (str) and optionally accumulated_symptoms (str). Returns the updated symptoms string.")
+async def gather_symptoms_endpoint(request: Request, user_query: str, accumulated_symptoms: str = ""):
+    """Directly gather symptoms from user input."""
+    try:
+        state = AgentState(user_query=user_query, accumulated_symptoms=accumulated_symptoms)
+        # Use the graph_flow directly, not the graph wrapper
+        from stores.langgraph.graphFlow import GraphFlow
+        graph_flow = GraphFlow(state)
+        result = await graph_flow.gather_symptoms(state)
+        return JSONResponse(content={"symptoms": result.get("symptoms", "")})
+    except Exception as e:
+        logger.error(f"Error in gather_symptoms: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
 
-@nlp_router.post("/relevance/check")
+@nlp_router.post("/relevance/check", summary="Check triage relevance", description="Checks if a case is relevant for medical triage. Receives a text string. Returns a boolean is_relevant and confidence.")
 async def check_relevance(request: Request, text: str):
     """Check if the case is relevant for triage."""
     try:
         state = AgentState(user_input=text)
-        result = await graph._check_relevance(state)
+        result = await graph.check_relevance(state)
+        # Add a dummy confidence value for now
         return JSONResponse(
             content={
-                "is_relevant": result.relevance_check.is_relevant,
-                "confidence": result.relevance_check.confidence
+                "is_relevant": result.get("is_relevant", False),
+                "confidence": 1.0
             }
         )
     except Exception as e:
@@ -246,7 +265,7 @@ async def check_relevance(request: Request, text: str):
         )
     
     
-@nlp_router.post("/triage/{project_id}")
+@nlp_router.post("/triage/{project_id}", summary="Full triage pipeline with LangGraph", description="Runs the full medical triage pipeline using the LangGraph state machine. Receives a project_id and a SearchRequest (with text). Returns the final response and full state.")
 async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
 
     project_model = await ProjectModel.create_instance(
@@ -279,7 +298,7 @@ async def triage_with_graph(request: Request, project_id: int, search_request: S
 
 
 
-@nlp_router.post("/info/process")
+@nlp_router.post("/info/process", summary="Process information request", description="Processes a general information request using the RAG pipeline. Receives query (str), docs (list), and web_results (list). Returns the processed response.")
 async def process_information(request: Request, query: str, docs: list, web_results: list):
     """Process information requests."""
     try:
@@ -297,7 +316,7 @@ async def process_information(request: Request, query: str, docs: list, web_resu
             content={"error": str(e)}
         )
 
-@nlp_router.post("/analysis/perform")
+@nlp_router.post("/analysis/perform", summary="Perform final analysis", description="Performs final analysis of symptoms and context. Receives symptoms (str), docs (list), and icd_codes (list). Returns analysis, relevant docs, and matched ICD codes.")
 async def perform_analysis(request: Request, symptoms: str, docs: list, icd_codes: list):
     """Perform final analysis."""
     try:
@@ -319,7 +338,7 @@ async def perform_analysis(request: Request, symptoms: str, docs: list, icd_code
             content={"error": str(e)}
         )
 
-@nlp_router.post("/explanation/evaluate")
+@nlp_router.post("/explanation/evaluate", summary="Evaluate explanation quality", description="Evaluates the quality of a generated explanation. Receives explanation (str). Returns whether refinement is needed and confidence.")
 async def evaluate_explanation(request: Request, explanation: str):
     """Evaluate explanation quality."""
     try:
@@ -339,7 +358,7 @@ async def evaluate_explanation(request: Request, explanation: str):
             content={"error": str(e)}
         )
 
-@nlp_router.post("/explanation/refine")
+@nlp_router.post("/explanation/refine", summary="Refine explanation if needed", description="Refines a generated explanation based on critique. Receives explanation (str) and critique (str). Returns the refined explanation.")
 async def refine_explanation(request: Request, explanation: str, critique: str):
     """Refine explanation if needed."""
     try:
@@ -357,7 +376,7 @@ async def refine_explanation(request: Request, explanation: str, critique: str):
             content={"error": str(e)}
         )
 
-@nlp_router.post("/output/prepare")
+@nlp_router.post("/output/prepare", summary="Prepare final output", description="Prepares the final output for the user. Receives analysis (str) and icd_codes (list). Returns the final output string.")
 async def prepare_output(request: Request, analysis: str, icd_codes: list):
     """Prepare final output."""
     try:
@@ -374,3 +393,5 @@ async def prepare_output(request: Request, analysis: str, icd_codes: list):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": str(e)}
         )
+
+

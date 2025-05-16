@@ -40,4 +40,8 @@ class TemplateParser:
             return None
         
         key_attribute = getattr(module, key)
-        return key_attribute.substitute(vars)
+        return key_attribute.template  # Return the string, not the Template object
+    
+#key_attribute = getattr(module, key)
+#return key_attribute.substitute(vars)
+

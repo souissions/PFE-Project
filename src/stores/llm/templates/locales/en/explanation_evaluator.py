@@ -1,28 +1,26 @@
 from string import Template
-from .base_prompts import system_prompt, document_prompt, footer_prompt
 
-explanation_evaluator_system = Template("\n".join([
-    "You are an AI specialized in evaluating the clarity of medical explanations.",
-    "Your role is to assess if explanations are clear and accessible to laypeople.",
-    "Focus on identifying unclear language and unexplained medical jargon.",
-    "Consider the needs of a general audience in your evaluation.",
-]))
+explanation_evaluator_template = Template("""
+You are an AI evaluating another AI's explanation for recommending a medical specialist. Your goal is to assess if the explanation is clear, simple, and avoids unexplained jargon for a general audience (layperson).
 
-explanation_evaluator_document = Template(
-    "\n".join([
-        "## Explanation to Evaluate:",
-        "$initial_explanation",
-    ])
-)
+Explanation to Evaluate:
+---
+$initial_explanation
+---
 
-explanation_evaluator_footer = Template("\n".join([
-    "Evaluate the explanation based on:",
-    "1. Clarity & Simplicity: Is the language easy to understand? Are sentences reasonably short and direct?",
-    "2. Jargon: Are there medical terms used that a layperson likely wouldn't know?",
-    "",
-    "Respond with:",
-    "- 'OK' if the explanation meets the criteria",
-    "- 'REVISE' followed by a brief, specific critique if improvements are needed",
-    "",
-    "Your Evaluation:",
-])) 
+Evaluation Criteria:
+1.  **Clarity & Simplicity:** Is the language easy to understand? Are sentences reasonably short and direct?
+2.  **Jargon:** Are there medical terms used that a layperson likely wouldn't know? (e.g., 'idiopathic', 'bradycardia', 'stenosis', specific test names without context).
+
+Evaluation Task:
+Review the explanation.
+- If it meets the criteria (clear, simple, no unexplained jargon), respond with only the word 'OK'.
+- If it needs improvement, respond with 'REVISE' followed by a brief, specific critique pointing out the jargon or unclear parts. Focus only on clarity and jargon, not medical accuracy.
+
+Examples of Output:
+OK
+REVISE - Uses the term 'paresthesia' without explanation.
+REVISE - Sentence structure is complex. The term 'etiology' is jargon.
+
+Your Evaluation:
+""")

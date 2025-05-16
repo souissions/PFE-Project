@@ -1,5 +1,4 @@
 from string import Template
-from .base_prompts import system_prompt, document_prompt, footer_prompt
 
 explanation_refiner_system = Template("\n".join([
     "You are an AI specialized in improving the clarity of medical explanations.",
