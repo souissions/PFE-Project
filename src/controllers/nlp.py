@@ -8,6 +8,7 @@ from models import ResponseSignal
 from tqdm.auto import tqdm
 from stores.langgraph.graph import graph
 from stores.langgraph.scheme.state import AgentState
+from stores.llm.templates.locales.en.symptom_sufficiency import symptom_sufficiency_prompt
 
 import logging
 
@@ -243,12 +244,41 @@ async def gather_symptoms_endpoint(request: Request, user_query: str, accumulate
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": str(e)}
         )
+    
+@nlp_router.post("/sufficiency/check", summary="Check symptom sufficiency", description="Checks if a symptom description is sufficiently detailed for analysis. Receives a text string. Returns a boolean is_sufficient and the raw answer.")
+async def check_sufficiency(request: Request, text: str):
+    """Check if the symptom description is sufficiently detailed for analysis."""
+    try:
+        result = await symptom_sufficiency_prompt.ainvoke({"accumulated_symptoms": text})
+        logger.debug(f"Raw LLM response for sufficiency: {result!r}")
+        # Handle result type robustly
+        if hasattr(result, 'text'):
+            answer = result.text.strip().upper()
+        elif hasattr(result, 'to_string'):
+            answer = result.to_string().strip().upper()
+        else:
+            answer = str(result).strip().upper()
+        logger.debug(f"Parsed sufficiency answer: {answer}")
+        is_sufficient = answer == "YES"
+        return JSONResponse(
+            content={
+                "is_sufficient": is_sufficient,
+                "raw_answer": answer
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in sufficiency check: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": str(e)}
+        )
 
 @nlp_router.post("/relevance/check", summary="Check triage relevance", description="Checks if a case is relevant for medical triage. Receives a text string. Returns a boolean is_relevant and confidence.")
 async def check_relevance(request: Request, text: str):
     """Check if the case is relevant for triage."""
     try:
-        state = AgentState(user_input=text)
+        # Pass the input as accumulated_symptoms for correct downstream logic
+        state = AgentState(accumulated_symptoms=text)
         result = await graph.check_relevance(state)
         # Add a dummy confidence value for now
         return JSONResponse(
@@ -264,40 +294,6 @@ async def check_relevance(request: Request, text: str):
             content={"error": str(e)}
         )
     
-    
-@nlp_router.post("/triage/{project_id}", summary="Full triage pipeline with LangGraph", description="Runs the full medical triage pipeline using the LangGraph state machine. Receives a project_id and a SearchRequest (with text). Returns the final response and full state.")
-async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
-
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-
-    nlp_controller = NLPService(
-        vectordb_client=request.app.vectordb_client,
-        generation_client=request.app.generation_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
-
-    result = await nlp_controller.run_langgraph_flow(query=search_request.text)
-
-    if not result or "final_response" not in result:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value}
-        )
-
-    return JSONResponse(
-        content={
-            "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
-            "response": result["final_response"],
-            "state": result  # full debug info
-        }
-    )
-
-
-
 @nlp_router.post("/info/process", summary="Process information request", description="Processes a general information request using the RAG pipeline. Receives query (str), docs (list), and web_results (list). Returns the processed response.")
 async def process_information(request: Request, query: str, docs: list, web_results: list):
     """Process information requests."""
@@ -316,19 +312,17 @@ async def process_information(request: Request, query: str, docs: list, web_resu
             content={"error": str(e)}
         )
 
-@nlp_router.post("/analysis/perform", summary="Perform final analysis", description="Performs final analysis of symptoms and context. Receives symptoms (str), docs (list), and icd_codes (list). Returns analysis, relevant docs, and matched ICD codes.")
-async def perform_analysis(request: Request, symptoms: str, docs: list, icd_codes: list):
+@nlp_router.post("/analysis/perform", summary="Perform final analysis", description="Performs final analysis of symptoms and context. Receives symptoms (str) and docs (list). Returns analysis and relevant docs.")
+async def perform_analysis(request: Request, symptoms: str, docs: list):
     """Perform final analysis."""
     try:
         state = AgentState(user_input=symptoms)
         state.relevant_docs = docs
-        state.matched_icd_codes = icd_codes
         result = await graph._final_analysis(state)
         return JSONResponse(
             content={
                 "analysis": result.final_analysis.analysis,
-                "relevant_docs": result.final_analysis.relevant_docs,
-                "matched_icd_codes": result.final_analysis.matched_icd_codes
+                "relevant_docs": result.final_analysis.relevant_docs
             }
         )
     except Exception as e:
@@ -376,16 +370,17 @@ async def refine_explanation(request: Request, explanation: str, critique: str):
             content={"error": str(e)}
         )
 
-@nlp_router.post("/output/prepare", summary="Prepare final output", description="Prepares the final output for the user. Receives analysis (str) and icd_codes (list). Returns the final output string.")
-async def prepare_output(request: Request, analysis: str, icd_codes: list):
+@nlp_router.post("/output/prepare", summary="Prepare final output", description="Prepares the final output for the user. Receives analysis (str). Returns the final output string.")
+async def prepare_output(request: Request, analysis: str):
     """Prepare final output."""
     try:
+        # Use dict-style AgentState, not attribute access
         state = AgentState()
-        state.final_analysis.analysis = analysis
-        state.final_analysis.matched_icd_codes = icd_codes
-        result = await graph._prepare_final_output(state)
+        state["final_explanation"] = analysis
+        result = await graph.prepare_final_output(state)
+        # result is expected to be a dict-like AgentState
         return JSONResponse(
-            content={"output": result.final_output}
+            content={"output": result.get("final_output")}
         )
     except Exception as e:
         logger.error(f"Error in output preparation: {e}")
@@ -393,5 +388,38 @@ async def prepare_output(request: Request, analysis: str, icd_codes: list):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": str(e)}
         )
+    
+@nlp_router.post("/triage/{project_id}", summary="Full triage pipeline with LangGraph", description="Runs the full medical triage pipeline using the LangGraph state machine. Receives a project_id and a SearchRequest (with text). Returns the final response and full state.")
+async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
+
+    project_model = await ProjectModel.create_instance(
+        db_client=request.app.db_client
+    )
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+
+    nlp_controller = NLPService(
+        vectordb_client=request.app.vectordb_client,
+        generation_client=request.app.generation_client,
+        embedding_client=request.app.embedding_client,
+        template_parser=request.app.template_parser,
+    )
+
+    result = await nlp_controller.run_langgraph_flow(query=search_request.text, project=project, nlp_service=nlp_controller)
+
+    if not result or "final_response" not in result:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value}
+        )
+
+    return JSONResponse(
+        content={
+            "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
+            "response": result["final_response"],
+            "state": result  # full debug info
+        }
+    )
+
+
 
 

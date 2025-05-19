@@ -1,5 +1,4 @@
 from .models import *
-from .doctor_recommender import DoctorRecommender
 from .multimodal_utils import MultimodalUtils
 from .chain_manager import ChainManager
 
@@ -25,7 +24,6 @@ __all__ = [
     "FinalOutputPreparerOutput",
     
     # Utility Classes
-    "DoctorRecommender",
     "MultimodalUtils",
     "ChainManager"
 ]

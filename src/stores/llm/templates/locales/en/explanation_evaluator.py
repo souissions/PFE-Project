@@ -1,11 +1,12 @@
 from string import Template
+from langchain_core.prompts import PromptTemplate
 
-explanation_evaluator_template = Template("""
-You are an AI evaluating another AI's explanation for recommending a medical specialist. Your goal is to assess if the explanation is clear, simple, and avoids unexplained jargon for a general audience (layperson).
+explanation_evaluator_template = """
+You are an AI evaluating another AI's explanation. Your goal is to assess if the explanation is clear, simple, and avoids unexplained jargon for a general audience (layperson).
 
 Explanation to Evaluate:
 ---
-$initial_explanation
+{initial_explanation}
 ---
 
 Evaluation Criteria:
@@ -22,5 +23,9 @@ OK
 REVISE - Uses the term 'paresthesia' without explanation.
 REVISE - Sentence structure is complex. The term 'etiology' is jargon.
 
-Your Evaluation:
-""")
+Your Evaluation:"""
+
+explanation_evaluator_prompt = PromptTemplate(
+    template=explanation_evaluator_template,
+    input_variables=["initial_explanation"]
+)

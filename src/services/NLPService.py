@@ -6,6 +6,7 @@ import json
 import logging
 from stores.langgraph.graph import graph, compiled_graph
 from stores.langgraph.scheme.state import AgentState
+from string import Template
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -98,7 +99,8 @@ class NLPService(BaseService):
         return results
     
     async def answer_rag_question(self, project: Project, query: str, limit: int = 10):
-        
+        import logging
+        logger = logging.getLogger('uvicorn.error')
         answer, full_prompt, chat_history = None, None, None
 
         # step1: retrieve related documents
@@ -108,6 +110,12 @@ class NLPService(BaseService):
             limit=limit,
         )
 
+        # Debug: Log retrieved documents and their text fields
+        logger.info(f"[RAG DEBUG] Retrieved {len(retrieved_documents) if retrieved_documents else 0} documents.")
+        if retrieved_documents:
+            for idx, doc in enumerate(retrieved_documents):
+                logger.info(f"[RAG DEBUG] Doc {idx+1}: text='" + str(getattr(doc, 'text', None))[:200] + "...'")
+
         if not retrieved_documents or len(retrieved_documents) == 0:
             return answer, full_prompt, chat_history
         
@@ -115,16 +123,16 @@ class NLPService(BaseService):
         system_prompt = self.template_parser.get("rag", "system_prompt")
 
         documents_prompts = "\n".join([
-            self.template_parser.get("rag", "document_prompt", {
-                    "doc_num": idx + 1,
-                    "chunk_text": self.generation_client.process_text(doc.text),
-            })
+            Template(self.template_parser.get("rag", "document_prompt")).substitute(
+                doc_num=idx + 1,
+                chunk_text=self.generation_client.process_text(doc.text),
+            )
             for idx, doc in enumerate(retrieved_documents)
         ])
 
-        footer_prompt = self.template_parser.get("rag", "footer_prompt", {
-            "query": query
-        })
+        footer_prompt = Template(self.template_parser.get("rag", "footer_prompt")).substitute(
+            query=query
+        )
 
         # step3: Construct Generation Client Prompts
         chat_history = [
@@ -206,17 +214,15 @@ class NLPService(BaseService):
             logger.error(f"Error in information processing: {e}")
             raise
 
-    async def perform_analysis(self, symptoms: str, docs: List[Dict], icd_codes: List[Dict]) -> Dict[str, Any]:
+    async def perform_analysis(self, symptoms: str, docs: List[Dict]) -> Dict[str, Any]:
         """Perform final analysis."""
         try:
             state = AgentState(user_input=symptoms)
             state.relevant_docs = docs
-            state.matched_icd_codes = icd_codes
             result = await graph._final_analysis(state)
             return {
                 "analysis": result.final_analysis.analysis,
-                "relevant_docs": result.final_analysis.relevant_docs,
-                "matched_icd_codes": result.final_analysis.matched_icd_codes
+                "relevant_docs": result.final_analysis.relevant_docs
             }
         except Exception as e:
             logger.error(f"Error in analysis: {e}")
@@ -248,19 +254,18 @@ class NLPService(BaseService):
             logger.error(f"Error in explanation refinement: {e}")
             raise
 
-    async def prepare_output(self, analysis: str, icd_codes: List[Dict]) -> str:
+    async def prepare_output(self, analysis: str) -> str:
         """Prepare final output."""
         try:
             state = AgentState()
             state.final_analysis.analysis = analysis
-            state.final_analysis.matched_icd_codes = icd_codes
             result = await graph._prepare_final_output(state)
             return result.final_output
         except Exception as e:
             logger.error(f"Error in output preparation: {e}")
             raise
 
-    async def run_langgraph_flow(self, query: str, image_bytes: Optional[bytes] = None) -> Dict[str, Any]:
+    async def run_langgraph_flow(self, query: str, image_bytes: Optional[bytes] = None, project=None, nlp_service=None) -> Dict[str, Any]:
         """Run the complete LangGraph flow."""
         try:
             logger.info("Starting LangGraph flow...")
@@ -282,10 +287,14 @@ class NLPService(BaseService):
                 "recommended_specialist": None,
                 "doctor_recommendations": None,
                 "no_doctors_found_specialist": None,
-                "final_response": None
+                "final_response": None,
+                # Pass project and nlp_service for in-process RAG
+                "project": project,
+                "nlp_service": nlp_service
             }
             result = await compiled_graph.ainvoke(state)
             logger.info("LangGraph flow completed successfully")
+            logger.info(f"LangGraph flow result: {result}")
             return result
         except Exception as e:
             logger.error(f"Error in LangGraph flow: {e}")

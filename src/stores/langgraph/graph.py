@@ -42,12 +42,17 @@ class Graph:
         """Decides whether to continue gathering symptoms or proceed to relevance check."""
         logger.info("🔄 Checking symptom gathering status...")
         new_state = await self.graph_flow.gather_symptoms(state)
+        # If the system needs more symptom detail, halt and ask for more info
+        if new_state.get("needs_more_symptom_detail"):
+            logger.info("🛑 Insufficient symptom detail, requesting more from user.")
+            return END
+        # If a final response was set (e.g., off-topic or error), end
         if new_state.get("final_response"):
             logger.info("✅ Symptom gathering complete")
             return END
-        else:
-            logger.info("➡️ Proceeding to relevance check")
-            return "check_triage_relevance"
+        # Otherwise, proceed to triage relevance check
+        logger.info("➡️ Proceeding to relevance check")
+        return "check_triage_relevance"
 
     async def route_based_on_relevance(self, state: AgentState) -> str:
         """Routes based on symptom relevance."""
@@ -72,7 +77,11 @@ class Graph:
         if critique.upper().startswith("REVISE") and loop < self.MAX_REFINE_LOOPS:
             return "refine_explanation"
         else:
-            return "extract_specialist_and_doctors"
+            return "prepare_final_output"
+
+    async def prepare_final_output(self, state: AgentState):
+        """Public method to prepare the final output using GraphFlow."""
+        return await self.graph_flow.prepare_final_output(state)
 
     def build(self):
         """Builds and compiles the graph with all nodes and edges."""
@@ -88,7 +97,6 @@ class Graph:
         self.graph.add_node("perform_final_analysis", self.graph_flow.perform_final_analysis)
         self.graph.add_node("evaluate_explanation", self.graph_flow.evaluate_explanation)
         self.graph.add_node("refine_explanation", self.graph_flow.refine_explanation)
-        self.graph.add_node("extract_specialist_and_doctors", self.graph_flow.extract_specialist_and_doctors)
         self.graph.add_node("prepare_final_output", self.graph_flow.prepare_final_output)
 
         # Set entry point
@@ -136,8 +144,8 @@ class Graph:
             "evaluate_explanation",
             self.route_based_on_evaluation,
             {
-                "extract_specialist_and_doctors": "extract_specialist_and_doctors",
-                "refine_explanation": "refine_explanation"
+                "refine_explanation": "refine_explanation",
+                "prepare_final_output": "prepare_final_output"
             }
         )
 
@@ -145,7 +153,6 @@ class Graph:
         self.graph.add_edge("refine_explanation", "evaluate_explanation")
         
         # Final output preparation
-        self.graph.add_edge("extract_specialist_and_doctors", "prepare_final_output")
         self.graph.add_edge("prepare_final_output", END)
 
         # Add direct end points
@@ -154,6 +161,7 @@ class Graph:
         self.graph.add_edge("handle_irrelevant_triage", END)
 
         logger.info("✅ Graph built successfully")
+        logger.info(f"Registered graph nodes: {list(self.graph.nodes.keys())}")
         return self.graph.compile()
 
 # Optional main block for testing

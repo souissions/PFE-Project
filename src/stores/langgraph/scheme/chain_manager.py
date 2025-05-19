@@ -89,25 +89,18 @@ class ChainManager:
         )
         
     def _init_explanation_evaluator_chain(self):
-        """Initialize the explanation evaluation chain."""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a medical triage assistant. Evaluate the quality of the explanation."),
-            ("human", "Explanation: {explanation}\n\nEvaluate quality.")
-        ])
-        
+        """Initialize the explanation evaluation chain using the updated prompt template."""
+        from stores.llm.templates.locales.en.explanation_evaluator import explanation_evaluator_prompt
         self.chains["explanation_evaluator"] = (
-            prompt | self.model | StrOutputParser()
+            explanation_evaluator_prompt | self.model | StrOutputParser()
         )
         
     def _init_explanation_refiner_chain(self):
         """Initialize the explanation refinement chain."""
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a medical triage assistant. Refine the explanation to be more clear and accurate."),
-            ("human", "Original explanation: {explanation}\n\nRefine it.")
-        ])
-        
+        # Use the new explanation_refiner_prompt from the updated template
+        from stores.llm.templates.locales.en.explanation_refiner import explanation_refiner_prompt
         self.chains["explanation_refiner"] = (
-            prompt | self.model | StrOutputParser()
+            explanation_refiner_prompt | self.model | StrOutputParser()
         )
         
     def _init_off_topic_handler_chain(self):
@@ -169,4 +162,4 @@ class ChainManager:
             return result
         except Exception as e:
             logger.error(f"❌ Error running chain '{chain_name}': {e}")
-            return None 
+            return None

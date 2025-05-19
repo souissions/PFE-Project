@@ -18,9 +18,51 @@ import json
 from stores.langgraph.scheme.state import AgentState
 from stores.langgraph.utils import (
     load_embedding_model, load_llm,
-    load_icd_data_and_embeddings, load_dataframes, load_specialist_list
+    load_dataframes
 )
 from stores.langgraph.graph import Graph
+
+# --- DB, Vector, LLM, Embedding, and Template Client Setup for In-Process RAG ---
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from helpers.config import get_settings
+from stores.llm.LLMProviderFactory import LLMProviderFactory
+from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
+from stores.llm.templates.template_parser import TemplateParser
+
+def get_db_client():
+    settings = get_settings()
+    db_url = getattr(settings, 'DATABASE_URL', None) or os.getenv("DATABASE_URL")
+    if not db_url:
+        st.error("DATABASE_URL not set in environment or config.")
+        return None
+    engine = create_async_engine(db_url, echo=False)
+    async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    return async_session
+
+def get_clients():
+    settings = get_settings()
+    db_client = get_db_client()
+    llm_provider_factory = LLMProviderFactory(config=settings)
+    vectordb_provider_factory = VectorDBProviderFactory(config=settings, db_client=db_client)
+    generation_client = llm_provider_factory.create(provider=settings.GENERATION_BACKEND)
+    embedding_client = llm_provider_factory.create(provider=settings.EMBEDDING_BACKEND)
+    vectordb_client = vectordb_provider_factory.create(provider=settings.VECTOR_DB_BACKEND)
+    template_parser = TemplateParser(language=settings.PRIMARY_LANG, default_language=settings.DEFAULT_LANG)
+    return {
+        "db_client": db_client,
+        "generation_client": generation_client,
+        "embedding_client": embedding_client,
+        "vectordb_client": vectordb_client,
+        "template_parser": template_parser,
+    }
+
+async def load_project(project_id, db_client):
+    from models.ProjectModel import ProjectModel
+    project_model = await ProjectModel.create_instance(db_client)
+    project = await project_model.get_project_or_create_one(project_id=project_id)
+    return project
 
 # --- Must be first Streamlit command ---
 st.set_page_config(page_title="AI Symptom checker", layout="wide")
@@ -45,9 +87,8 @@ except Exception as e:
 print("Loading application components...")
 embedding_model = load_embedding_model()
 llm = load_llm()
-icd_codes_g, icd_embeddings_g = load_icd_data_and_embeddings(embedding_model)
+
 doctor_df_g, cases_df_g = load_dataframes()
-specialist_list_g = load_specialist_list()
 print("Finished loading application components.")
 
 # --- Build LangGraph Agent ---
@@ -55,7 +96,7 @@ print("Finished loading application components.")
 def get_compiled_graph():
     """Builds or retrieves the compiled LangGraph agent."""
     print("Attempting to build/retrieve compiled LangGraph agent...")
-    if llm and embedding_model and specialist_list_g:
+    if llm and embedding_model:
         try:
             # Instantiate GraphFlow and Graph, then build
             from stores.langgraph.graphFlow import GraphFlow
@@ -75,8 +116,8 @@ def get_compiled_graph():
             return None
     else:
         missing_comps = [name for comp, name in zip(
-            [llm, embedding_model, specialist_list_g],
-            ['LLM', 'Embeddings', 'SpecialistList']
+            [llm, embedding_model],
+            ['LLM', 'Embeddings']
         ) if comp is None]
         error_msg = f"Core components ({', '.join(missing_comps)}) failed to load earlier. Agent cannot be built."
         st.error(error_msg)
@@ -208,32 +249,71 @@ if prompt:
             "no_doctors_found_specialist": None, "final_response": None
         }
 
-        # 5. Execute the agent graph
+        # --- Build or get project and NLPService for in-process RAG ---
+        from services.NLPService import NLPService
+        clients = get_clients()
+        project_id = 1  # or user-selected
+        db_client = clients["db_client"]
+        project = None
+        if db_client is not None:
+            try:
+                import sys
+                if sys.platform == "win32":
+                    project = asyncio.run(load_project(project_id, db_client))
+                else:
+                    try:
+                        import nest_asyncio
+                        nest_asyncio.apply()
+                        loop = asyncio.get_event_loop()
+                        project = loop.run_until_complete(load_project(project_id, db_client))
+                    except Exception:
+                        project = asyncio.run(load_project(project_id, db_client))
+            except Exception as e:
+                print(f"Error loading project: {e}")
+                st.error(f"Error loading project: {e}")
+        else:
+            st.warning("DB client not available. RAG will not use real project context.")
+        nlp_service = NLPService(
+            vectordb_client=clients["vectordb_client"],
+            generation_client=clients["generation_client"],
+            embedding_client=clients["embedding_client"],
+            template_parser=clients["template_parser"]
+        )
+        initial_graph_input["project"] = project
+        initial_graph_input["nlp_service"] = nlp_service
+
+        # 5. Execute the agent graph (in-process, not HTTP)
         final_state: Optional[Dict[str, Any]] = None
         with st.spinner("Processing your request..."):
             try:
-                response = requests.post(
-                    f"{BASE_URL}/api/v1/nlp/triage/1",  # Using project_id 1 for now
-                    json={"text": user_text_input}
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    final_state = result.get("state", {})
-                    agent_response = result.get("response")
-                    
-                    st.session_state.agent_final_state = final_state
-                    
-                    if agent_response:
-                        st.session_state.messages.append({"role": "assistant", "content": agent_response})
-                        st.session_state.agent_input_history.append({"role": "assistant", "content": agent_response})
+                # Use the compiled LangGraph app directly
+                if graph_app:
+                    import asyncio
+                    # Run the graph async function
+                    if sys.platform == "win32":
+                        final_state = asyncio.run(graph_app.ainvoke(initial_graph_input))
                     else:
-                        error_msg = "No response received from the AI."
-                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                        try:
+                            import nest_asyncio
+                            nest_asyncio.apply()
+                            loop = asyncio.get_event_loop()
+                            final_state = loop.run_until_complete(graph_app.ainvoke(initial_graph_input))
+                        except Exception:
+                            final_state = asyncio.run(graph_app.ainvoke(initial_graph_input))
+                    agent_response = final_state.get("final_response") if final_state else None
                 else:
-                    error_msg = f"Error: {response.status_code} - {response.text}"
+                    error_msg = "Sorry, the AI agent is currently unavailable."
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    st.session_state.agent_final_state = None
+                    st.rerun()
 
+                st.session_state.agent_final_state = final_state
+                if agent_response:
+                    st.session_state.messages.append({"role": "assistant", "content": agent_response})
+                    st.session_state.agent_input_history.append({"role": "assistant", "content": agent_response})
+                else:
+                    error_msg = "No response received from the AI."
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
             except Exception as e:
                 print(f"Error processing request: {e}")
                 traceback.print_exc()
@@ -243,6 +323,13 @@ if prompt:
 
         # 6. Extract primary text response for chat history
         agent_response = final_state.get("final_response") if final_state else None
+
+        # --- NEW: Handle symptom sufficiency follow-up ---
+        needs_more_symptom_detail = final_state.get("needs_more_symptom_detail") if final_state else False
+        followup_message = final_state.get("followup_message") if final_state else None
+        if needs_more_symptom_detail and followup_message:
+            st.session_state.messages.append({"role": "assistant", "content": followup_message})
+            st.session_state.agent_input_history.append({"role": "assistant", "content": followup_message})
 
         # Add agent's response (or error) to display history
         if agent_response:
@@ -277,7 +364,6 @@ if st.session_state.agent_final_state:
 
         # Display Context Expander
         rag_context = final_state_to_display.get("rag_context")
-        icd_codes = final_state_to_display.get("matched_icd_codes")
         accumulated_symptoms_display = final_state_to_display.get("accumulated_symptoms")
 
         # Determine if there's relevant context/codes to show
@@ -285,37 +371,24 @@ if st.session_state.agent_final_state:
         # Check if rag_context is valid string and not an error/NA message from the tool itself
         if rag_context and isinstance(rag_context, str) and not rag_context.startswith(("N/A", "Error:")) and rag_context != "No relevant documents found.":
             show_expander = True
-        # Check if icd_codes is valid string and not an error/NA message from the tool itself
-        if icd_codes and isinstance(icd_codes, str) and not icd_codes.startswith(("N/A", "Error:")) and icd_codes != "No relevant ICD codes found with sufficient similarity.":
-             show_expander = True
 
         if show_expander:
-            # Add separator only if needed
-           
-            with st.expander("🔍 Show Analysis Details (Context & Codes)", expanded=False):
+            with st.expander("🔍 Show Analysis Details (Context)", expanded=False):
                 st.markdown("**Symptoms Used for Analysis (Accumulated Text):**")
-                st.text(accumulated_symptoms_display.replace("[User provided an image]", "").strip() if accumulated_symptoms_display else "N/A") # Show cleaned text
-
-                st.markdown("**Matched ICD10 Codes (Informational):**")
-                st.text(icd_codes if icd_codes else "N/A")
-
+                st.text(accumulated_symptoms_display.replace("[User provided an image]", "").strip() if accumulated_symptoms_display else "N/A")
                 st.markdown("**Retrieved Context from Knowledge Base:**")
                 if rag_context and isinstance(rag_context, str) and not rag_context.startswith(("N/A", "Error:")) and rag_context != "No relevant documents found.":
-                     # Split the context string by the '=====' separator used in the tool
-                     context_blocks = rag_context.split("\n=====\n")
-                     for i, block in enumerate(context_blocks):
-                         # Parse the source and content from each block
-                         source_line = ""
-                         content_text = block # Default to the whole block if parsing fails
-                         if block.startswith("Source:") and "\n---\n" in block:
-                             parts = block.split("\n---\n", 1)
-                             source_line = parts[0].strip() # e.g., "Source: filename.pdf"
-                             content_text = parts[1].strip() if len(parts) > 1 else ""
-                         # Display source and content
-                         st.markdown(f"--- **Chunk {i+1}** ({source_line}) ---")
-                         st.text_area(f"chunk_content_{i}", value=content_text, height=150, disabled=True, key=f"expander_rag_chunk_{i}", label_visibility="collapsed")
+                    context_blocks = rag_context.split("\n=====\n")
+                    for i, block in enumerate(context_blocks):
+                        source_line = ""
+                        content_text = block
+                        if block.startswith("Source:") and "\n---\n" in block:
+                            parts = block.split("\n---\n", 1)
+                            source_line = parts[0].strip()
+                            content_text = parts[1].strip() if len(parts) > 1 else ""
+                        st.markdown(f"--- **Chunk {i+1}** ({source_line}) ---")
+                        st.text_area(f"chunk_content_{i}", value=content_text, height=150, disabled=True, key=f"expander_rag_chunk_{i}", label_visibility="collapsed")
                 else:
-                    # Display the RAG context value even if it's an error message from the tool or N/A
                     st.text(rag_context if rag_context else "N/A")
 
 # --- Sidebar Elements ---
@@ -323,7 +396,6 @@ st.sidebar.header("About")
 st.sidebar.info("AI Symptom Checker using LangGraph and FastAPI")
 st.sidebar.header("Data Sources")
 st.sidebar.markdown("- Medical knowledge base")
-st.sidebar.markdown("- ICD-10 Mapping")
 
 # --- Restart Button ---
 if st.sidebar.button("🔄 Restart Conversation"):
@@ -338,3 +410,4 @@ if st.sidebar.button("🔄 Restart Conversation"):
     st.session_state.messages.append({"role": "assistant", "content": initial_greeting})
     st.session_state.agent_input_history.append({"role": "assistant", "content": initial_greeting})
     st.rerun()
+

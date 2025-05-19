@@ -1,32 +1,28 @@
-from string import Template
+from langchain_core.prompts import PromptTemplate
 
-explanation_refiner_system = Template("\n".join([
-    "You are an AI specialized in improving the clarity of medical explanations.",
-    "Your role is to rewrite explanations to be more accessible to laypeople.",
-    "Focus on simplifying language and explaining medical jargon.",
-    "Maintain the accuracy of the medical information while improving clarity.",
-]))
+explanation_refiner_template = """
+You are an AI assistant rewriting a medical explanation to improve its clarity for a layperson, based on specific feedback.
 
-explanation_refiner_document = Template(
-    "\n".join([
-        "## Original Explanation:",
-        "$initial_explanation",
-        "",
-        "## Areas to Improve:",
-        "$evaluator_critique",
-    ])
+Original Explanation:
+---
+{initial_explanation}
+---
+
+Critique / Areas to Improve:
+---
+{evaluator_critique}
+---
+
+Rewrite the 'Original Explanation' to directly address the 'Critique'. Your goals are:
+1.  Replace or provide simple explanations for any specific jargon terms mentioned in the critique.
+2.  Simplify sentence structures identified as complex.
+3.  Ensure the core meaning remains accurate and consistent with the original.
+4.  Do NOT add any new medical information, advice, or opinions.
+
+Output only the rewritten explanation.
+
+Rewritten Explanation:"""
+explanation_refiner_prompt = PromptTemplate(
+    template=explanation_refiner_template,
+    input_variables=["initial_explanation", "evaluator_critique"]
 )
-
-explanation_refiner_footer = Template("\n".join([
-    "Rewrite the explanation to:",
-    "1. Replace or explain any jargon terms mentioned in the critique",
-    "2. Simplify complex sentence structures",
-    "3. Maintain the core meaning and accuracy",
-    "",
-    "Do NOT:",
-    "- Add new medical information",
-    "- Provide medical advice",
-    "- Include opinions",
-    "",
-    "Rewritten Explanation:",
-])) 

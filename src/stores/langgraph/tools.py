@@ -27,20 +27,15 @@ class Tools:
     def _initialize_resources(self) -> None:
         """Initialize required resources using utility functions."""
         try:
-            from stores.langgraph.utils import load_embedding_model, load_icd_data_and_embeddings
+            from stores.langgraph.utils import load_embedding_model
             self.embedding_model = load_embedding_model()
-            self.icd_codes, self.icd_embeddings = load_icd_data_and_embeddings(self.embedding_model)
             logger.info("✅ Resources loaded successfully")
         except ImportError as e:
             logger.error(f"❌ Error importing from utils: {e}")
             self.embedding_model = None
-            self.icd_codes = []
-            self.icd_embeddings = None
         except Exception as e:
             logger.error(f"❌ Error loading components: {e}")
             self.embedding_model = None
-            self.icd_codes = []
-            self.icd_embeddings = None
 
     def _validate_credentials(self) -> None:
         """Validate API credentials and configurations."""
@@ -49,16 +44,34 @@ class Tools:
         else:
             logger.info("✅ Google API credentials loaded")
 
-    def retrieve_relevant_documents(self, user_symptoms: str) -> str:
-        """Retrieves relevant documents from the RAG backend based on user symptoms."""
-        logger.info("📚 Retrieving relevant documents...")
+    def retrieve_relevant_documents(self, user_symptoms: str, nlp_service=None, project=None) -> dict:
+        """Retrieves relevant documents from the RAG backend based on user symptoms, and evaluates context sufficiency."""
+        logger.info("📚 Retrieving relevant documents (direct call)...")
         logger.debug(f"Input: '{user_symptoms[:100]}...'")
-
+        logger.info(f"nlp_service type: {type(nlp_service)}, project type: {type(project)}")
+        context = None
+        is_sufficient = False
+        # If nlp_service and project are provided, use direct function call
+        if nlp_service is not None and project is not None:
+            import asyncio
+            try:
+                logger.info("Forcing direct in-process RAG call for debugging.")
+                answer, full_prompt, chat_history = asyncio.run(nlp_service.answer_rag_question(project, user_symptoms, limit=3))
+                logger.info("✅ Documents retrieved successfully (direct)")
+                context = answer or "No relevant documents found."
+                # Simple sufficiency check: context must be at least 100 characters and not a fallback string
+                if context and len(context) > 100 and "No relevant documents found" not in context:
+                    is_sufficient = True
+                return {"context": context, "is_sufficient": is_sufficient}
+            except Exception as e:
+                import traceback
+                error_msg = f"Error in direct RAG retrieval: {e}\n{traceback.format_exc()}"
+                logger.error(f"❌ {error_msg}")
+                return {"context": error_msg, "is_sufficient": False}
+        # Fallback: old HTTP call (for legacy use)
         try:
-            # Use hardcoded values for PROJECT_ID and limit to avoid settings issues
             project_id = 1  # Hardcoded project ID
-            limit = 3       # Hardcoded limit (RAG_K)
-            
+            limit = 3
             response = requests.post(
                 f"{self.settings.FASTAPI_URL}/api/v1/nlp/index/answer/{project_id}",
                 json={"text": user_symptoms, "limit": limit},
@@ -66,34 +79,20 @@ class Tools:
             )
             response.raise_for_status()
             data = response.json()
-            
             result = data.get("answer", "No answer returned from backend.")
-            logger.info("✅ Documents retrieved successfully")
-            return result
-            
+            context = result
+            if context and len(context) > 100 and "No answer returned from backend" not in context:
+                is_sufficient = True
+            logger.info("✅ Documents retrieved successfully (HTTP fallback)")
+            return {"context": context, "is_sufficient": is_sufficient}
         except requests.exceptions.RequestException as e:
             error_msg = f"Error calling backend RAG: {e}"
             logger.error(f"❌ {error_msg}")
-            return error_msg
+            return {"context": error_msg, "is_sufficient": False}
         except Exception as e:
             error_msg = f"Unexpected error in document retrieval: {e}"
             logger.error(f"❌ {error_msg}")
-        try:
-            if not text:
-                logger.error("Empty text provided for ICD code matching")
-                return []
-                
-            response = requests.post(
-                f"{self.settings.FASTAPI_URL}/api/v1/icd/match",
-                json={"text": text, "top_n": 5}  # Hardcoded top_n to avoid settings issue
-            )
-            if response.status_code == 200:
-                return response.json()
-            logger.error(f"Failed to match ICD codes: {response.status_code}")
-            return []
-        except Exception as e:
-            logger.error(f"Error matching ICD codes: {e}")
-            return []
+            return {"context": error_msg, "is_sufficient": False}
 
     @tool
     def google_search(self, query: str) -> str:
@@ -125,29 +124,12 @@ class Tools:
             logger.error(f"❌ {error_msg}")
             return error_msg
 
-    def _validate_icd_components(self) -> bool:
-        """Validate that ICD matching components are properly initialized."""
-        if self.icd_embeddings is None or not self.icd_codes or not self.embedding_model:
-            logger.error("❌ ICD code matching components are missing")
-            return False
-        return True
-
     def _validate_google_credentials(self) -> bool:
         """Validate that Google API credentials are available."""
         if not self.settings.GOOGLE_API_KEY or not self.settings.GOOGLE_CSE_ID:
             logger.error("❌ Google API credentials are missing")
             return False
         return True
-
-    def _collect_matches(self, sorted_indices: np.ndarray, sims: np.ndarray) -> List[str]:
-        """Collect ICD code matches above the similarity threshold."""
-        matched = []
-        for idx in sorted_indices[:self.settings.ICD_TOP_N]:
-            if sims[idx] >= self.settings.ICD_SIM_THRESHOLD:
-                code = self.icd_codes[idx]
-                score = sims[idx]
-                matched.append(f"{code} (Similarity: {score:.2f})")
-        return matched
 
 # Instantiate and expose a module-level Tools object for import convenience
 

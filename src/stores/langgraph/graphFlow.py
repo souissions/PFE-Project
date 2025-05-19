@@ -8,6 +8,13 @@ from stores.langgraph.scheme.state import AgentState
 from stores.langgraph.scheme.models import IntentQuery
 from stores.langgraph.scheme.models.relevance_checker import RelevanceCheckerInput, RelevanceCheckerOutput
 from stores.llm.templates.locales.en.relevance_check import relevance_check_prompt
+from stores.langgraph.scheme.models.final_analysis import FinalAnalysisInput, FinalAnalysisOutput
+from stores.langgraph.scheme.models.info_request_handler import InfoRequestHandlerInput, InfoRequestHandlerOutput
+from stores.langgraph.scheme.models.explanation_evaluator import ExplanationEvaluatorInput, ExplanationEvaluatorOutput, ExplanationRefinerInput, ExplanationRefinerOutput
+from stores.langgraph.scheme.models.off_topic_handler import OffTopicHandlerInput, OffTopicHandlerOutput
+from stores.langgraph.scheme.models.irrelevant_triage_handler import IrrelevantTriageHandlerInput, IrrelevantTriageHandlerOutput
+from stores.langgraph.scheme.models.final_output_preparer import FinalOutputPreparerInput, FinalOutputPreparerOutput
+from stores.llm.templates.locales.en.rag_evaluator import off_topic_response, irrelevant_triage_response
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
@@ -42,7 +49,7 @@ class GraphFlow:
         self.intent_chain = self.intent_prompt | self.llm
         self.followup_chain = self.followup_prompt | self.llm
 
-    async def classify_intent(self, state: AgentState) -> Dict[str, Any]:
+    async def classify_intent(self, state: AgentState) -> AgentState:
         """Classify user intent based on conversation history and latest query."""
         try:
             logger.info(f"[DEBUG] classify_intent input: conversation_history={state['conversation_history']}, user_query={state['user_query']}")
@@ -57,110 +64,181 @@ class GraphFlow:
             intent_label = result.content.strip().upper()
             logger.info(f"[DEBUG] classify_intent extracted intent: {intent_label}")
             state["intent"] = intent_label
-            return {"intent": intent_label}
+            return state
         except Exception as e:
             logger.error(f"Error in classify_intent: {e}")
             state["intent"] = "UNKNOWN"
-            return {"intent": "UNKNOWN"}
+            return state
 
-    async def gather_symptoms(self, state: AgentState) -> Dict[str, Any]:
-        """Gather and analyze symptoms from user input."""
+    async def gather_symptoms(self, state: AgentState) -> AgentState:
+        """Gather and analyze symptoms from user input, then check sufficiency before relevance."""
         try:
             # Prepare input for symptom analysis
             input_data = {
                 "accumulated_symptoms": state["accumulated_symptoms"],
                 "user_query": state["user_query"]
             }
-            
             # Run symptom analysis
             result = await self.followup_chain.ainvoke(input_data)
-            symptoms = result.content.strip()
-            
-            # Update state with new symptoms
+            # Robustly extract string content
+            if hasattr(result, 'content'):
+                symptoms = result.content.strip()
+            elif hasattr(result, 'text'):
+                symptoms = result.text.strip()
+            elif hasattr(result, 'to_string'):
+                symptoms = result.to_string().strip()
+            else:
+                symptoms = str(result).strip()
             state["accumulated_symptoms"] = symptoms
-            return {"symptoms": symptoms}
-            
+
+            # --- Symptom sufficiency check ---
+            from stores.llm.templates.locales.en.symptom_sufficiency import symptom_sufficiency_prompt
+            sufficiency_result = await symptom_sufficiency_prompt.ainvoke({"accumulated_symptoms": symptoms})
+            if hasattr(sufficiency_result, 'text'):
+                sufficiency_answer = sufficiency_result.text.strip().upper()
+            elif hasattr(sufficiency_result, 'to_string'):
+                sufficiency_answer = sufficiency_result.to_string().strip().upper()
+            else:
+                sufficiency_answer = str(sufficiency_result).strip().upper()
+            state["symptom_sufficiency"] = sufficiency_answer
+            if sufficiency_answer.startswith("NO"):
+                # Not enough detail, ask for more and halt flow for now
+                state["needs_more_symptom_detail"] = True
+                state["followup_message"] = "Can you provide more details about your symptoms? For example, describe the nature, location, severity, duration, onset, triggers, or any associated factors."
+                return state
+            # If YES, proceed as normal
+            state["needs_more_symptom_detail"] = False
+            return state
         except Exception as e:
             logger.error(f"Error in gather_symptoms: {e}")
-            return {"symptoms": state["accumulated_symptoms"]}
+            return state
 
-    async def check_triage_relevance(self, state: AgentState) -> Dict[str, Any]:
+    async def check_triage_relevance(self, state: AgentState) -> AgentState:
         """Checks if the accumulated symptoms are medically relevant using a LangChain prompt."""
         logger.info("🔍 Checking triage relevance...")
         accumulated_symptoms = state.get('accumulated_symptoms', '')
-        # Format the prompt string
-        prompt_str = self.relevance_check_prompt.format(accumulated_symptoms=accumulated_symptoms)
-        # Call the LLM directly
-        llm_result = await self.llm.ainvoke(prompt_str)
-        # Handle Gemini/OpenAI output
-        answer = None
-        if hasattr(llm_result, 'content'):
-            answer = llm_result.content.strip().upper()
-        elif hasattr(llm_result, 'text'):
-            answer = llm_result.text.strip().upper()
-        elif isinstance(llm_result, dict):
-            if 'content' in llm_result:
-                answer = str(llm_result['content']).strip().upper()
-            elif 'text' in llm_result:
-                answer = str(llm_result['text']).strip().upper()
+        # Remove image placeholder text if present
+        if accumulated_symptoms and isinstance(accumulated_symptoms, str):
+            accumulated_symptoms = accumulated_symptoms.replace("[IMAGE UPLOADED]", "").strip()
+        # If no text symptoms, assume irrelevant
+        if not accumulated_symptoms:
+            logger.info("No accumulated symptoms text found. Marking as irrelevant.")
+            state["is_relevant"] = False
+            return state
+        # Format the prompt string correctly
+        prompt_str = None
+        if hasattr(self.relevance_check_prompt, 'format'):
+            prompt_val = self.relevance_check_prompt.format(accumulated_symptoms=accumulated_symptoms)
+            # If the result is a function, call it until it's not
+            while callable(prompt_val):
+                prompt_val = prompt_val()
+            if hasattr(prompt_val, 'to_string'):
+                prompt_str = prompt_val.to_string()
+            elif hasattr(prompt_val, 'text'):
+                prompt_str = prompt_val.text
+            elif hasattr(prompt_val, 'content'):
+                prompt_str = prompt_val.content
+            else:
+                prompt_str = str(prompt_val)
+        elif callable(self.relevance_check_prompt):
+            prompt_val = self.relevance_check_prompt(accumulated_symptoms=accumulated_symptoms)
+            while callable(prompt_val):
+                prompt_val = prompt_val()
+            if hasattr(prompt_val, 'to_string'):
+                prompt_str = prompt_val.to_string()
+            elif hasattr(prompt_val, 'text'):
+                prompt_str = prompt_val.text
+            elif hasattr(prompt_val, 'content'):
+                prompt_str = prompt_val.content
+            else:
+                prompt_str = str(prompt_val)
         else:
-            answer = str(llm_result).strip().upper()
-        is_relevant = answer.startswith("YES")
-        logger.info(f"🔍 Triage relevance: {is_relevant} (LLM answer: {answer})")
-        return RelevanceCheckerOutput(is_relevant=is_relevant).dict()
+            prompt_str = str(self.relevance_check_prompt)
+        logger.debug(f"[DEBUG] triage relevance prompt_str type: {type(prompt_str)}, value: {prompt_str!r}")
+        try:
+            # Ensure prompt_str is a string
+            if not isinstance(prompt_str, str):
+                prompt_str = str(prompt_str)
+            llm_result = await self.llm.ainvoke(prompt_str)
+            logger.debug(f"[DEBUG] triage relevance llm_result type: {type(llm_result)}, value: {llm_result!r}")
+            # If the result is a function, call it until it's not
+            while callable(llm_result):
+                llm_result = llm_result()
+            # Robustly extract string from LLM result
+            if hasattr(llm_result, 'content'):
+                answer = llm_result.content.strip().upper()
+            elif hasattr(llm_result, 'text'):
+                answer = llm_result.text.strip().upper()
+            elif hasattr(llm_result, 'to_string'):
+                answer = llm_result.to_string().strip().upper()
+            else:
+                answer = str(llm_result).strip().upper()
+            logger.debug(f"Parsed triage relevance answer: {answer}")
+            if answer == 'YES':
+                is_relevant = True
+            elif answer == 'NO':
+                is_relevant = False
+            else:
+                logger.warning(f"⚠️ Unexpected LLM answer for triage relevance: {answer}. Defaulting to relevant.")
+                is_relevant = True  # Fail-safe: default to relevant
+        except Exception as e:
+            logger.error(f"❌ Error in triage relevance LLM chain: {e}. Defaulting to relevant.")
+            is_relevant = True  # Fail-safe: default to relevant
+        logger.info(f"🔍 Triage relevance: {is_relevant}")
+        state["is_relevant"] = is_relevant
+        return state
 
-    async def handle_info_request(self, state: AgentState) -> Dict[str, Any]:
+    async def handle_info_request(self, state: AgentState) -> AgentState:
         """Handles general medical information requests."""
         logger.info("📚 Handling information request...")
-        
         input_data = InfoRequestHandlerInput(
             user_query=state.get('user_query', ''),
             uploaded_image_bytes=state.get('uploaded_image_bytes')
         )
-        
         if not input_data.user_query:
             logger.warning("⚠️ No query provided for information request")
-            return InfoRequestHandlerOutput(
-                final_response="No query provided.",
-                rag_context=None,
-                uploaded_image_bytes=None
-            ).dict()
-
-        context = tools.retrieve_relevant_documents(input_data.user_query)
-        icd_codes = tools.match_relevant_icd_codes(input_data.user_query)
-
-        response_content = f"Context: {context}\nICD Codes: {icd_codes}"
+            state["final_response"] = "No query provided."
+            state["rag_context"] = None
+            state["uploaded_image_bytes"] = None
+            return state
+        # Use project and nlp_service from state for in-process RAG
+        project = state.get('project')
+        nlp_service = state.get('nlp_service')
+        context = tools.retrieve_relevant_documents(input_data.user_query, nlp_service=nlp_service, project=project)
+        response_content = f"Context: {context}"
         logger.info("✅ Information request handled")
-        
-        return InfoRequestHandlerOutput(
-            final_response=response_content,
-            rag_context=context,
-            uploaded_image_bytes=None
-        ).dict()
+        state["final_response"] = response_content
+        state["rag_context"] = context
+        state["uploaded_image_bytes"] = None
+        return state
 
-    async def perform_final_analysis(self, state: AgentState) -> Dict[str, Any]:
+    async def perform_final_analysis(self, state: AgentState) -> AgentState:
         """Performs final analysis of symptoms and generates recommendations."""
         logger.info("🔬 Performing final analysis...")
-        
         input_data = FinalAnalysisInput(
             accumulated_symptoms=state.get('accumulated_symptoms', ''),
             uploaded_image_bytes=state.get('uploaded_image_bytes')
         )
-        
-        context = tools.retrieve_relevant_documents(input_data.accumulated_symptoms)
-        icd_codes = tools.match_relevant_icd_codes(input_data.accumulated_symptoms)
+        project = state.get('project')
+        nlp_service = state.get('nlp_service')
+        rag_result = tools.retrieve_relevant_documents(input_data.accumulated_symptoms, nlp_service=nlp_service, project=project)
+        context = rag_result.get("context")
+        is_sufficient = rag_result.get("is_sufficient", False)
+        matched_icd_codes = state.get('matched_icd_codes', None)
+        logger.info(f"✅ Final analysis completed. Context sufficiency: {is_sufficient}")
+        state["rag_context"] = context
+        state["context_is_sufficient"] = is_sufficient
+        if not is_sufficient:
+            state["initial_explanation"] = "Sorry, the information in our knowledge base is not sufficient to answer your question. Please provide more details or try again later."
+        else:
+            state["initial_explanation"] = "Analysis complete"
+        state["matched_icd_codes"] = matched_icd_codes
+        state["evaluator_critique"] = None
+        state["loop_count"] = 0
+        state["uploaded_image_bytes"] = None
+        return state
 
-        logger.info("✅ Final analysis completed")
-        return FinalAnalysisOutput(
-            initial_explanation="Analysis complete",  # TODO: Implement proper explanation
-            rag_context=context,
-            matched_icd_codes=icd_codes,
-            evaluator_critique=None,
-            loop_count=0,
-            uploaded_image_bytes=None
-        ).dict()
-
-    async def evaluate_explanation(self, state: AgentState) -> Dict[str, Any]:
+    async def evaluate_explanation(self, state: AgentState) -> AgentState:
         """Evaluates the clarity and quality of the explanation."""
         logger.info("📊 Evaluating explanation...")
         
@@ -172,9 +250,10 @@ class GraphFlow:
         critique = "OK"
         
         logger.info(f"📊 Evaluation result: {critique}")
-        return ExplanationEvaluatorOutput(evaluator_critique=critique).dict()
+        state["evaluator_critique"] = critique
+        return state
 
-    async def refine_explanation(self, state: AgentState) -> Dict[str, Any]:
+    async def refine_explanation(self, state: AgentState) -> AgentState:
         """Refines the explanation based on evaluation feedback."""
         logger.info("🔄 Refining explanation...")
         
@@ -185,21 +264,19 @@ class GraphFlow:
         
         if input_data.evaluator_critique == "OK":
             logger.info("✅ No refinement needed")
-            return ExplanationRefinerOutput(
-                initial_explanation=input_data.initial_explanation,
-                loop_count=state.get('loop_count', 0) + 1
-            ).dict()
+            state["initial_explanation"] = input_data.initial_explanation
+            state["loop_count"] = state.get('loop_count', 0) + 1
+            return state
 
         # TODO: Implement proper refinement
         refined_explanation = "Refined explanation"
         
         logger.info("✅ Explanation refined")
-        return ExplanationRefinerOutput(
-            initial_explanation=refined_explanation,
-            loop_count=state.get('loop_count', 0) + 1
-        ).dict()
+        state["initial_explanation"] = refined_explanation
+        state["loop_count"] = state.get('loop_count', 0) + 1
+        return state
 
-    async def handle_off_topic(self, state: AgentState) -> Dict[str, Any]:
+    async def handle_off_topic(self, state: AgentState) -> AgentState:
         """Handles off-topic queries."""
         logger.info("🚫 Handling off-topic query...")
         
@@ -210,12 +287,11 @@ class GraphFlow:
         response = "Sorry, this topic is outside my medical assistant capabilities. Please describe a health-related concern."
         logger.info("✅ Off-topic response generated")
         
-        return OffTopicHandlerOutput(
-            final_response=response,
-            uploaded_image_bytes=None
-        ).dict()
+        state["final_response"] = response
+        state["uploaded_image_bytes"] = None
+        return state
 
-    async def handle_irrelevant_triage(self, state: AgentState) -> Dict[str, Any]:
+    async def handle_irrelevant_triage(self, state: AgentState) -> AgentState:
         """Handles irrelevant triage cases."""
         logger.info("⚠️ Handling irrelevant triage...")
         
@@ -226,67 +302,20 @@ class GraphFlow:
         response = "Your symptoms don't appear to require immediate medical attention. However, if you're concerned, please consult a healthcare professional."
         logger.info("✅ Irrelevant triage response generated")
         
-        return IrrelevantTriageHandlerOutput(
-            final_response=response,
-            rag_context="N/A (Triage irrelevant)",
-            matched_icd_codes="N/A (Triage irrelevant)",
-            uploaded_image_bytes=None
-        ).dict()
+        state["final_response"] = response
+        state["rag_context"] = "N/A (Triage irrelevant)"
+        state["uploaded_image_bytes"] = None
+        return state
 
-    async def prepare_final_output(self, state: AgentState) -> Dict[str, Any]:
+    async def prepare_final_output(self, state: AgentState) -> AgentState:
         """Prepares the final output for the user."""
-        logger.info("📤 Preparing final output...")
-        
+        logger.info(f"📤 Preparing final output... Incoming state: {state}")
         input_data = FinalOutputPreparerInput(
             final_explanation=state.get('final_explanation'),
             final_response=state.get('final_response')
         )
-        
         final_response = input_data.final_response or input_data.final_explanation or "Processing complete."
         logger.info("✅ Final output prepared")
-        
-        return FinalOutputPreparerOutput(final_response=final_response).dict()
-
-    async def extract_specialist_and_doctors(self, state: AgentState) -> AgentState:
-        """Extract specialist and doctors information from the conversation."""
-        try:
-            # Get the last message from the user
-            last_message = state.messages[-1].content if state.messages else ""
-            
-            # Use the LLM to extract specialist and doctors information
-            prompt = f"""Based on the following conversation, extract information about specialists and doctors mentioned:
-            {last_message}
-            
-            Return the information in this format:
-            {{
-                "specialists": ["specialist1", "specialist2"],
-                "doctors": ["doctor1", "doctor2"]
-            }}
-            """
-            
-            response = await self.llm.ainvoke(prompt)
-            
-            # Parse the response
-            try:
-                info = json.loads(response)
-                state.specialists = info.get("specialists", [])
-                state.doctors = info.get("doctors", [])
-            except json.JSONDecodeError:
-                # If JSON parsing fails, try to extract information using string manipulation
-                state.specialists = []
-                state.doctors = []
-                
-                # Add a message about the extraction
-                state.messages.append(
-                    HumanMessage(content="I've extracted information about specialists and doctors from our conversation.")
-                )
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"Error in extract_specialist_and_doctors: {str(e)}")
-            # Add error message to state
-            state.messages.append(
-                HumanMessage(content="I encountered an error while extracting specialist and doctor information.")
-            )
-            return state
+        state["final_response"] = final_response
+        state["final_output"] = final_response  # Ensure final_output is set for downstream consumers
+        return state

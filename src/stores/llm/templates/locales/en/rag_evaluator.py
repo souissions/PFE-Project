@@ -1,27 +1,26 @@
-from string import Template
+from langchain_core.prompts import PromptTemplate
 
-rag_relevance_system = Template("\n".join([
-    "You are an AI specialized in evaluating the relevance of retrieved context for answering user questions.",
-    "Your role is to determine if the provided context is sufficient and directly relevant to answer the specific question.",
-    "Focus on direct answerability, not just topic overlap.",
-    "Consider both the specificity of the question and the completeness of the context.",
-]))
+# --- Basic Deflection Messages ---
+# Defined as constants for direct use in nodes
+# These are the canonical definitions for use throughout the project
 
-rag_relevance_document = Template(
-    "\n".join([
-        "## Retrieved Context:",
-        "$rag_context",
-        "",
-        "## User Question:",
-        "$user_query",
-    ])
+off_topic_response = "Sorry, I am designed to assist with preliminary medical information and symptom discussion. I can't help with topics outside of that scope. Do you have any other symptoms you'd like to discuss?"
+irrelevant_triage_response = "Based on our conversation, it doesn't seem like we focused on specific medical symptoms for triage. If you have health concerns you'd like assistance understanding or finding potential specialist types for, please describe them clearly. For any medical advice or diagnosis, please consult a qualified healthcare professional."
+
+rag_relevance_evaluator_template = """
+Evaluate whether the following retrieved context is likely sufficient and relevant to directly answer the user's specific question. Focus on direct answerability, not just topic overlap.
+
+Retrieved Context:
+---
+{rag_context}
+---
+
+User Question: {user_query}
+
+Is the context directly relevant and likely sufficient to answer the specific question? Respond with only the word 'YES' or 'NO'.
+Relevant & Sufficient:"""
+
+rag_relevance_evaluator_prompt = PromptTemplate(
+    template=rag_relevance_evaluator_template,
+    input_variables=["rag_context", "user_query"]
 )
-
-rag_relevance_footer = Template("\n".join([
-    "Evaluate if the context is:",
-    "1. Directly relevant to the specific question",
-    "2. Sufficient to provide a complete answer",
-    "",
-    "Respond with only the word 'YES' or 'NO'.",
-    "Relevant & Sufficient:",
-])) 
