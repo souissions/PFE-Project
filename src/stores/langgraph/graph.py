@@ -42,10 +42,10 @@ class Graph:
         """Decides whether to continue gathering symptoms or proceed to relevance check."""
         logger.info("🔄 Checking symptom gathering status...")
         new_state = await self.graph_flow.gather_symptoms(state)
-        # If the system needs more symptom detail, halt and ask for more info
+        # If the system needs more symptom detail, loop back to gather_symptoms for multi-turn followup
         if new_state.get("needs_more_symptom_detail"):
-            logger.info("🛑 Insufficient symptom detail, requesting more from user.")
-            return END
+            logger.info("🛑 Insufficient symptom detail, requesting more from user. Looping back to gather_symptoms.")
+            return "gather_symptoms"
         # If a final response was set (e.g., off-topic or error), end
         if new_state.get("final_response"):
             logger.info("✅ Symptom gathering complete")
