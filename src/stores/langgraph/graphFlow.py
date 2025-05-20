@@ -219,9 +219,20 @@ class GraphFlow:
             accumulated_symptoms=state.get('accumulated_symptoms', ''),
             uploaded_image_bytes=state.get('uploaded_image_bytes')
         )
-        project = state.get('project')
+                # Get project_id safely from state or fallback
+        project = state.get("project")
+        project_id = state.get("project_id") or (getattr(project, "project_id", None) if project else None)
+        nlp_service = state.get("nlp_service")
+
+        logger.info(f"📁 Using project ID in analysis: {project_id}")
         nlp_service = state.get('nlp_service')
-        rag_result = tools.retrieve_relevant_documents(input_data.accumulated_symptoms, nlp_service=nlp_service, project=project)
+        logger.info(f"📁 Using project ID in analysis: {getattr(project, 'project_id', None)}")
+
+        rag_result = tools.retrieve_relevant_documents(
+         input_data.accumulated_symptoms,
+         nlp_service=nlp_service,
+         project_id=project_id  # ← changed to pass id directly
+       )
         context = rag_result.get("context")
         is_sufficient = rag_result.get("is_sufficient", False)
         matched_icd_codes = state.get('matched_icd_codes', None)

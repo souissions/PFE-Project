@@ -423,6 +423,7 @@ if prompt:
                             raise
 
                     project = loop.run_until_complete(load_project_with_context())
+
             except Exception as e:
                 logger.error(f'Error loading project: {str(e)}', exc_info=True)
                 st.error("Failed to load project. Check the logs for details.")
@@ -430,7 +431,15 @@ if prompt:
         else:
             logger.error('DB client initialization failed. Check database connection settings.')
             st.warning('Database connection failed. The system will operate with limited functionality.')# NLP service will be initialized in the async context
-        initial_graph_input["project"] = project
+        if project:
+         initial_graph_input["project"] = project
+         initial_graph_input["project_id"] = getattr(project, "project_id", None)
+         logger.info(f"✅ Injected project with ID: {getattr(project, 'project_id', None)}")
+         logger.info(f"📂 Injected project type: {type(project)}")
+
+         logger.info(f"✅ Injected project with ID: {initial_graph_input['project_id']}")
+        else:
+         logger.warning("⚠️ Project loading failed — RAG may not work.")
 
         # 5. Execute the agent graph (in-process, not HTTP)
         final_state: Optional[Dict[str, Any]] = None
