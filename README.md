@@ -46,11 +46,7 @@ pip install -r src/requirements.txt
 ```bash
 cp .env.example .env
 ```
-Then fill in the values for:
-- `COHERE_API_KEY`
-- `POSTGRES_USERNAME`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, etc.
-- `GENERATION_MODEL_ID` (e.g., `command-a-03-2025`)
-- `EMBEDDING_MODEL_ID` (e.g., `embed-multilingual-light-v3.0`)
+Then fill in the missing values
 
 ### 3. Run Alembic DB Migration
 ```bash
