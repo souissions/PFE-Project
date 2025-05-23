@@ -33,35 +33,6 @@ This project implements a custom **RAG (Retrieval-Augmented Generation)** system
 
 ---
 
-## 📁 Project Structure
-```
-mini-rag/
-├── src/
-│   ├── main.py                  # FastAPI app entry point
-│   ├── api/                     # API versioning and endpoints
-│   │   └── v1/
-│   │       └── endpoints/       # API endpoint definitions
-│   ├── assets/                  # Static and data assets
-│   │   ├── data/                # Data files (e.g., CSV, pickle)
-│   │   └── files/               # Uploaded files
-│   ├── controllers/             # Business logic (file processing, indexing, search)
-│   ├── helpers/                 # Helper utilities (e.g., config management)
-│   ├── models/                  # DB models + ORM layer
-│   ├── services/                # Service layer for business logic
-│   ├── stores/                  # Storage integrations
-│   │   ├── langgraph/           # LangGraph agent workflow (triage, intent, etc.)
-│   │   ├── llm/                 # Embedding + generation (Cohere/OpenAI/Hugging Face/Google)
-│   │   └── vectordb/            # PGVector or Qdrant integration
-│   ├── views/                   # Streamlit frontend
-│   └── tests/                   # Unit and integration tests
-├── docker/                      # Docker for PGVector/Mongo setup
-├── .env.example                 # Sample env config
-├── requirements.txt             # Python dependencies
-└── README.md
-```
-
----
-
 ## ⚙️ Setup & Installation
 
 ### 1. Install dependencies
@@ -126,16 +97,6 @@ streamlit run src/views/file_upload_app.py
 7. **LLM Prompt + Answer** → using Cohere LLM (`command-a-03-2025`)  
 8. **LangGraph Agent** → classifies intent, gathers symptoms, checks relevance, and generates/refines explanations
 
----
-
-## 🧠 Models Used
-| Purpose     | Model                                  |
-|-------------|----------------------------------------|
-| Embeddings  | `embed-multilingual-light-v3.0`(Cohere)|
-| Generation  | `command-a-03-2025` (Cohere)           |
-
-Embeddings have **384 dimensions** representing text meaning in vector space.  
-Similarity is calculated using **cosine similarity**.
 
 ---
 
