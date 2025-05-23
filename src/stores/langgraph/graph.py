@@ -83,6 +83,16 @@ class Graph:
         """Public method to prepare the final output using GraphFlow."""
         return await self.graph_flow.prepare_final_output(state)
 
+    async def run_full_triage(self, state: AgentState):
+        """
+        Runs the full LangGraph triage pipeline from entry to end, returning the final state.
+        This builds and executes the compiled state machine graph with the provided state.
+        """
+        compiled_graph = self.build()  # Get the compiled graph (StateGraph)
+        # The compiled graph is an async runnable: use .ainvoke(state)
+        result = await compiled_graph.ainvoke(state)
+        return result
+
     def build(self):
         """Builds and compiles the graph with all nodes and edges."""
         logger.info("🏗️ Building graph...")
@@ -121,6 +131,7 @@ class Graph:
             "gather_symptoms",
             self.should_continue_symptom_gathering,
             {
+                "gather_symptoms": "gather_symptoms",  # <-- Fix: allow looping for follow-up
                 "check_triage_relevance": "check_triage_relevance",
                 END: END
             }
@@ -168,22 +179,26 @@ class Graph:
 if __name__ == '__main__':
     logger.info("🧪 Testing graph builder...")
     try:
-        graph_flow = GraphFlow(AgentState())
-        graph = Graph(graph_flow)
-        compiled_graph = graph.build()
-        if compiled_graph:
-            logger.info("✅ Graph compilation successful!")
-        else:
-            logger.error("❌ Graph compilation failed")
+        # TODO: Pass a real nlp_service instance here for full functionality
+        raise RuntimeError("You must provide an nlp_service instance to GraphFlow!")
+        # graph_flow = GraphFlow(AgentState(), nlp_service=your_nlp_service_instance)
+        # graph = Graph(graph_flow)
+        # compiled_graph = graph.build()
+        # if compiled_graph:
+        #     logger.info("✅ Graph compilation successful!")
+        # else:
+        #     logger.error("❌ Graph compilation failed")
     except Exception as e:
         logger.error(f"❌ Error during graph build test: {e}")
         import traceback
         traceback.print_exc()
 
-# Create and export the graph instance
-graph_flow = GraphFlow(AgentState())
-graph = Graph(graph_flow)
-compiled_graph = graph.build()
+# NOTE: You must pass nlp_service to GraphFlow in production code!
+# The application (e.g., Streamlit app) is responsible for creating:
+#   graph_flow = GraphFlow(AgentState(), nlp_service=your_nlp_service_instance)
+#   graph = Graph(graph_flow)
+#   compiled_graph = graph.build()
+# Do NOT create global graph_flow/graph/compiled_graph here.
 
-# Export the compiled graph
-__all__ = ['graph']
+# Export the Graph class for use by the application
+__all__ = ['Graph']

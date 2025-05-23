@@ -6,8 +6,9 @@ from models.ChunkModel import ChunkModel
 from services import NLPService
 from models import ResponseSignal
 from tqdm.auto import tqdm
-from stores.langgraph.graph import graph
+from stores.langgraph.graph import Graph  # Use this if you need to instantiate a graph
 from stores.langgraph.scheme.state import AgentState
+from stores.langgraph.graphFlow import GraphFlow
 from stores.llm.templates.locales.en.symptom_sufficiency import symptom_sufficiency_prompt
 
 import logging
@@ -18,6 +19,36 @@ nlp_router = APIRouter(
     prefix="/api/v1/nlp",
     tags=["api_v1", "nlp"],
 )
+
+# --- Graph setup ---
+# You must create a GraphFlow and Graph instance with a real nlp_service.
+# For FastAPI, you may want to create these per-request or as a dependency.
+# Here is a simple example (replace with your actual nlp_service):
+# from services.NLPService import NLPService
+# nlp_service = NLPService(...)
+# graph_flow = GraphFlow(AgentState(), nlp_service=nlp_service)
+# graph = Graph(graph_flow)
+#
+# For now, we'll assume you have a function get_graph() that returns a ready-to-use graph instance.
+
+def get_graph(request=None, project=None):
+    """
+    Returns a ready-to-use Graph instance with a real nlp_service and project context.
+    If request and project are provided, uses them to build the correct context.
+    """
+    from services.NLPService import NLPService
+    from stores.langgraph.graphFlow import GraphFlow
+    from stores.langgraph.graph import Graph
+    if request is None:
+        raise RuntimeError("get_graph() requires the FastAPI request object for context.")
+    nlp_service = NLPService(
+        vectordb_client=request.app.vectordb_client,
+        generation_client=request.app.generation_client,
+        embedding_client=request.app.embedding_client,
+        template_parser=request.app.template_parser,
+    )
+    graph_flow = GraphFlow(AgentState(), nlp_service=nlp_service)
+    return Graph(graph_flow)
 
 @nlp_router.post("/index/push/{project_id}", summary="Index project data into the vector database", description="Pushes all project chunks into the vector database for retrieval-augmented generation. Receives a project_id and a PushRequest (with do_reset flag). Returns the number of inserted items.")
 async def index_project(request: Request, project_id: int, push_request: PushRequest):
@@ -212,8 +243,8 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
 async def classify_intent(request: Request, text: str):
     """Classify user intent."""
     try:
-        # Ensure both user_query and conversation_history are set
         state = AgentState(user_query=text, conversation_history="")
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph.classify_intent(state)
         return JSONResponse(
             content={
@@ -229,22 +260,19 @@ async def classify_intent(request: Request, text: str):
         )
     
 @nlp_router.post("/symptoms/gather", summary="Extract symptoms from user input", description="Extracts and accumulates symptoms from a user query. Receives user_query (str) and optionally accumulated_symptoms (str). Returns the updated symptoms string.")
-async def gather_symptoms_endpoint(request: Request, user_query: str, accumulated_symptoms: str = ""):
-    """Directly gather symptoms from user input."""
-    try:
-        state = AgentState(user_query=user_query, accumulated_symptoms=accumulated_symptoms)
-        # Use the graph_flow directly, not the graph wrapper
-        from stores.langgraph.graphFlow import GraphFlow
-        graph_flow = GraphFlow(state)
-        result = await graph_flow.gather_symptoms(state)
-        return JSONResponse(content={"symptoms": result.get("symptoms", "")})
-    except Exception as e:
-        logger.error(f"Error in gather_symptoms: {e}")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": str(e)}
-        )
-    
+async def gather_symptoms(request: Request):
+    data = await request.json()
+    user_query = data.get("user_query", "")
+    conversation_history = data.get("conversation_history", [])
+    # Only accumulate user messages
+    user_symptom_texts = [msg["content"] for msg in conversation_history if msg.get("role") == "user"]
+    if user_query:
+        user_symptom_texts.append(user_query)
+    accumulated_symptoms = "\n".join(user_symptom_texts).strip()
+    # ...call your symptom extraction logic here, passing accumulated_symptoms...
+    # For demonstration, just return the accumulated_symptoms
+    return {"accumulated_symptoms": accumulated_symptoms}
+
 @nlp_router.post("/sufficiency/check", summary="Check symptom sufficiency", description="Checks if a symptom description is sufficiently detailed for analysis. Receives a text string. Returns a boolean is_sufficient and the raw answer.")
 async def check_sufficiency(request: Request, text: str):
     """Check if the symptom description is sufficiently detailed for analysis."""
@@ -279,6 +307,7 @@ async def check_relevance(request: Request, text: str):
     try:
         # Pass the input as accumulated_symptoms for correct downstream logic
         state = AgentState(accumulated_symptoms=text)
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph.check_relevance(state)
         # Add a dummy confidence value for now
         return JSONResponse(
@@ -301,6 +330,7 @@ async def process_information(request: Request, query: str, docs: list, web_resu
         state = AgentState(user_input=query)
         state.relevant_docs = docs
         state.web_results = web_results
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph._handle_information_request(state)
         return JSONResponse(
             content={"response": result.final_output}
@@ -318,6 +348,7 @@ async def perform_analysis(request: Request, symptoms: str, docs: list):
     try:
         state = AgentState(user_input=symptoms)
         state.relevant_docs = docs
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph._final_analysis(state)
         return JSONResponse(
             content={
@@ -338,6 +369,7 @@ async def evaluate_explanation(request: Request, explanation: str):
     try:
         state = AgentState()
         state.final_analysis.analysis = explanation
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph._evaluate_explanation(state)
         return JSONResponse(
             content={
@@ -359,6 +391,7 @@ async def refine_explanation(request: Request, explanation: str, critique: str):
         state = AgentState()
         state.final_analysis.analysis = explanation
         state.explanation_evaluation = {"critique": critique}
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph._refine_explanation(state)
         return JSONResponse(
             content={"refined_explanation": result.final_analysis.analysis}
@@ -377,6 +410,7 @@ async def prepare_output(request: Request, analysis: str):
         # Use dict-style AgentState, not attribute access
         state = AgentState()
         state["final_explanation"] = analysis
+        graph = get_graph(request)  # <-- Use the correct graph instance
         result = await graph.prepare_final_output(state)
         # result is expected to be a dict-like AgentState
         return JSONResponse(
@@ -390,35 +424,38 @@ async def prepare_output(request: Request, analysis: str):
         )
     
 @nlp_router.post("/triage/{project_id}", summary="Full triage pipeline with LangGraph", description="Runs the full medical triage pipeline using the LangGraph state machine. Receives a project_id and a SearchRequest (with text). Returns the final response and full state.")
-async def triage_with_graph(request: Request, project_id: int, search_request: SearchRequest):
-
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
+async def triage_pipeline(request: Request, project_id: int):
+    data = await request.json()
+    user_query = data.get("text", "")
+    conversation_history = data.get("conversation_history", [])
+    # Only accumulate user messages
+    user_symptom_texts = [msg["content"] for msg in conversation_history if msg.get("role") == "user"]
+    if user_query:
+        user_symptom_texts.append(user_query)
+    accumulated_symptoms = "\n".join(user_symptom_texts).strip()
+    # Build initial agent state
+    state = AgentState(
+        conversation_history=conversation_history,
+        user_query=user_query,
+        accumulated_symptoms=accumulated_symptoms,
+        user_intent=None,
+        is_relevant=None,
+        loop_count=0,
+        rag_context=None,
+        initial_explanation=None,
+        evaluator_critique=None,
+        final_explanation=None,
+        recommended_specialist=None,
+        doctor_recommendations=None,
+        no_doctors_found_specialist=None,
+        final_response=None,
+        uploaded_image_bytes=None,
+        image_prompt_text=None,
     )
-    project = await project_model.get_project_or_create_one(project_id=project_id)
-
-    nlp_controller = NLPService(
-        vectordb_client=request.app.vectordb_client,
-        generation_client=request.app.generation_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
-
-    result = await nlp_controller.run_langgraph_flow(query=search_request.text, project=project, nlp_service=nlp_controller)
-
-    if not result or "final_response" not in result:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"signal": ResponseSignal.RAG_ANSWER_ERROR.value}
-        )
-
-    return JSONResponse(
-        content={
-            "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
-            "response": result["final_response"],
-            "state": result  # full debug info
-        }
-    )
+    # Run the graph pipeline
+    graph = get_graph(request=request)
+    result_state = await graph.run_full_triage(state)
+    return {"final_response": result_state.get("final_response"), "state": result_state}
 
 
 

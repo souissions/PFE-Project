@@ -40,8 +40,26 @@ class Tools:
             logger.info("✅ Google API credentials loaded")
 
     def retrieve_relevant_documents(self, user_symptoms: str, nlp_service=None, project=None, project_id=None) -> dict:
+        """
+        Retrieves relevant documents from the RAG backend based on user symptoms, and evaluates context sufficiency.
 
-        """Retrieves relevant documents from the RAG backend based on user symptoms, and evaluates context sufficiency."""
+        ---
+        This method supports two modes:
+        1. **Direct In-Process Call**: If both `nlp_service` and `project` are provided, it will call the RAG logic directly in-process (recommended for performance and reliability).
+        2. **HTTP Fallback**: If direct call is not possible (e.g., missing dependencies), it falls back to making an HTTP request to the FastAPI backend.
+
+        This dual approach allows the system to work in both tightly integrated (monolithic) and loosely coupled (microservice or remote) deployments.
+        The fallback ensures robustness but may be slower or less reliable if the backend is unavailable.
+
+        Args:
+            user_symptoms (str): The user's symptom description.
+            nlp_service (optional): The NLPService instance for direct calls.
+            project (optional): The project object for context.
+            project_id (optional): The project ID (used if project is not provided).
+
+        Returns:
+            dict: {"context": str, "is_sufficient": bool}
+        """
         logger.info("📚 Retrieving relevant documents (direct call)...")
         logger.debug(f"Input: '{user_symptoms[:100]}...'")
         logger.info(f"nlp_service type: {type(nlp_service)}, project type: {type(project)}")
@@ -58,7 +76,6 @@ class Tools:
                  or getattr(project, "id", None)
                  or project_id
           )
-
                 if not project_id:
                     logger.warning("⚠️ Project object is missing a valid ID. Skipping document retrieval.")
                     return {"context": "N/A (No project ID)", "is_sufficient": False}
@@ -66,6 +83,7 @@ class Tools:
                 logger.info(f"📁 Using project_id={project_id} for in-process RAG")
                 logger.info("🔄 Forcing direct in-process RAG call")
 
+                # Direct in-process RAG call (preferred)
                 answer, full_prompt, chat_history = asyncio.run(
                     nlp_service.answer_rag_question(project, user_symptoms, limit=3)
                 )
@@ -83,7 +101,7 @@ class Tools:
                 logger.error(f"❌ {error_msg}")
                 return {"context": error_msg, "is_sufficient": False}
 
-        # Fallback: old HTTP call (for legacy use)
+        # Fallback: HTTP call to FastAPI backend (legacy or remote use)
         try:
             project_id = (
              getattr(project, "project_id", None)

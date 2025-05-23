@@ -4,7 +4,7 @@ from stores.llm.LLMEnums import DocumentTypeEnum
 from typing import List, Dict, Any, Optional
 import json
 import logging
-from stores.langgraph.graph import graph, compiled_graph
+from stores.langgraph.graph import Graph
 from stores.langgraph.scheme.state import AgentState
 from string import Template
 
@@ -13,13 +13,15 @@ logger = logging.getLogger('uvicorn.error')
 class NLPService(BaseService):
 
     def __init__(self, vectordb_client, generation_client, 
-                 embedding_client, template_parser):
+                 embedding_client, template_parser, graph_flow=None, graph=None):
         super().__init__()
 
         self.vectordb_client = vectordb_client
         self.generation_client = generation_client
         self.embedding_client = embedding_client
         self.template_parser = template_parser
+        self.graph_flow = graph_flow
+        self.graph = graph
 
     def create_collection_name(self, project_id: str):
         return f"collection_{self.vectordb_client.default_vector_size}_{project_id}".strip()
@@ -174,11 +176,10 @@ class NLPService(BaseService):
         # Fallback: return OFF_TOPIC
         return "OFF_TOPIC"
 
-    async def classify_intent(self, text: str) -> Dict[str, Any]:
-        """Classify user intent using LangGraph."""
+    async def classify_intent(self, state: AgentState) -> Dict[str, Any]:
+        """Classify user intent using LangGraph (state-based)."""
         try:
-            state = AgentState(user_input=text)
-            result = await graph.classify_intent(state)
+            result = await self.graph.classify_intent(state)
             raw_intent = getattr(result.intent_classification, "intent", "")
             normalized_intent = self.normalize_intent_output(str(raw_intent))
             return {
@@ -189,11 +190,10 @@ class NLPService(BaseService):
             logger.error(f"Error in intent classification: {e}")
             raise
 
-    async def check_relevance(self, text: str) -> Dict[str, Any]:
-        """Check if the case is relevant for triage."""
+    async def check_relevance(self, state: AgentState) -> Dict[str, Any]:
+        """Check if the case is relevant for triage (state-based)."""
         try:
-            state = AgentState(user_input=text)
-            result = await graph.check_relevance(state)
+            result = await self.graph.check_relevance(state)
             return {
                 "is_relevant": result.relevance_check.is_relevant,
                 "confidence": result.relevance_check.confidence
@@ -202,24 +202,19 @@ class NLPService(BaseService):
             logger.error(f"Error in relevance check: {e}")
             raise
 
-    async def process_information(self, query: str, docs: List[Dict], web_results: List[Dict]) -> str:
-        """Process information requests."""
+    async def process_information(self, state: AgentState) -> str:
+        """Process information requests (state-based)."""
         try:
-            state = AgentState(user_input=query)
-            state.relevant_docs = docs
-            state.web_results = web_results
-            result = await graph._handle_information_request(state)
+            result = await self.graph_flow.handle_info_request(state)
             return result.final_output
         except Exception as e:
             logger.error(f"Error in information processing: {e}")
             raise
 
-    async def perform_analysis(self, symptoms: str, docs: List[Dict]) -> Dict[str, Any]:
-        """Perform final analysis."""
+    async def perform_analysis(self, state: AgentState) -> Dict[str, Any]:
+        """Perform final analysis (state-based)."""
         try:
-            state = AgentState(user_input=symptoms)
-            state.relevant_docs = docs
-            result = await graph._final_analysis(state)
+            result = await self.graph_flow.perform_final_analysis(state)
             return {
                 "analysis": result.final_analysis.analysis,
                 "relevant_docs": result.final_analysis.relevant_docs
@@ -228,12 +223,10 @@ class NLPService(BaseService):
             logger.error(f"Error in analysis: {e}")
             raise
 
-    async def evaluate_explanation(self, explanation: str) -> Dict[str, Any]:
-        """Evaluate explanation quality."""
+    async def evaluate_explanation(self, state: AgentState) -> Dict[str, Any]:
+        """Evaluate explanation quality (state-based)."""
         try:
-            state = AgentState()
-            state["initial_explanation"] = explanation
-            result = await graph._evaluate_explanation(state)
+            result = await self.graph_flow.evaluate_explanation(state)
             return {
                 "needs_refinement": result.get("needs_refinement"),
                 "confidence": result.get("confidence")
@@ -242,24 +235,19 @@ class NLPService(BaseService):
             logger.error(f"Error in explanation evaluation: {e}")
             raise
 
-    async def refine_explanation(self, explanation: str, critique: str) -> str:
-        """Refine explanation if needed."""
+    async def refine_explanation(self, state: AgentState) -> str:
+        """Refine explanation if needed (state-based)."""
         try:
-            state = AgentState()
-            state.final_analysis.analysis = explanation
-            state.explanation_evaluation = {"critique": critique}
-            result = await graph._refine_explanation(state)
+            result = await self.graph_flow.refine_explanation(state)
             return result.final_analysis.analysis
         except Exception as e:
             logger.error(f"Error in explanation refinement: {e}")
             raise
 
-    async def prepare_output(self, analysis: str) -> str:
-        """Prepare final output."""
+    async def prepare_output(self, state: AgentState) -> str:
+        """Prepare final output (state-based)."""
         try:
-            state = AgentState()
-            state.final_analysis.analysis = analysis
-            result = await graph._prepare_final_output(state)
+            result = await self.graph_flow.prepare_final_output(state)
             return result.final_output
         except Exception as e:
             logger.error(f"Error in output preparation: {e}")
@@ -292,7 +280,7 @@ class NLPService(BaseService):
                 "project": project,
                 "nlp_service": nlp_service
             }
-            result = await compiled_graph.ainvoke(state)
+            result = await self.graph_flow.prepare_final_output(state)
             logger.info("LangGraph flow completed successfully")
             logger.info(f"LangGraph flow result: {result}")
             return result

@@ -25,8 +25,9 @@ from langchain.schema import HumanMessage
 logger = logging.getLogger("uvicorn")
 
 class GraphFlow:
-    def __init__(self, state: AgentState):
+    def __init__(self, state: AgentState, nlp_service=None):
         self.state = state
+        self.nlp_service = nlp_service
         self.parser = TemplateParser(language='en')
         self.llm = load_llm()
         
@@ -80,20 +81,45 @@ class GraphFlow:
             }
             # Run symptom analysis
             result = await self.followup_chain.ainvoke(input_data)
-            # Robustly extract string content
             if hasattr(result, 'content'):
-                symptoms = result.content.strip()
+                followup_question = result.content.strip()
             elif hasattr(result, 'text'):
-                symptoms = result.text.strip()
+                followup_question = result.text.strip()
             elif hasattr(result, 'to_string'):
-                symptoms = result.to_string().strip()
+                followup_question = result.to_string().strip()
             else:
-                symptoms = str(result).strip()
-            state["accumulated_symptoms"] = symptoms
+                followup_question = str(result).strip()
+
+            # --- PATCH: Robust vagueness detection (check both user_query and accumulated_symptoms) ---
+            vague_patterns = [
+                r"\b(feel(s)? (bad|unwell|sick|off|tired|weird|strange|not well|not good))\b",
+                r"\b(bad|unwell|tired|sick|pain|hurt|ache|not good|not well)\b",
+                r"^\s*$"
+            ]
+            def is_vague_text(text):
+                return (
+                    not text or len(text.split()) < 3 or any(re.search(p, text, re.IGNORECASE) for p in vague_patterns)
+                )
+            is_vague = is_vague_text(state["user_query"]) or is_vague_text(state["accumulated_symptoms"])
+
+            followup_count = state.get("followup_count", 0)
+            if is_vague:
+                followup_count += 1
+                state["followup_count"] = followup_count
+                state["needs_more_symptom_detail"] = True
+                state["followup_message"] = followup_question
+                state["final_response"] = followup_question
+                # If too many followups, exit gracefully
+                if followup_count >= 2:
+                    state["needs_more_symptom_detail"] = False
+                    state["followup_message"] = None
+                    state["final_response"] = "I'm unable to gather enough detail. Please describe your symptoms in your own words, or consult a healthcare professional."
+                    return state
+                return state
 
             # --- Symptom sufficiency check ---
             from stores.llm.templates.locales.en.symptom_sufficiency import symptom_sufficiency_prompt
-            sufficiency_result = await symptom_sufficiency_prompt.ainvoke({"accumulated_symptoms": symptoms})
+            sufficiency_result = await symptom_sufficiency_prompt.ainvoke({"accumulated_symptoms": state["accumulated_symptoms"]})
             if hasattr(sufficiency_result, 'text'):
                 sufficiency_answer = sufficiency_result.text.strip().upper()
             elif hasattr(sufficiency_result, 'to_string'):
@@ -102,12 +128,19 @@ class GraphFlow:
                 sufficiency_answer = str(sufficiency_result).strip().upper()
             state["symptom_sufficiency"] = sufficiency_answer
             if sufficiency_answer.startswith("NO"):
-                # Not enough detail, ask for more and halt flow for now
+                followup_count = state.get("followup_count", 0) + 1
+                state["followup_count"] = followup_count
                 state["needs_more_symptom_detail"] = True
-                state["followup_message"] = "Can you provide more details about your symptoms? For example, describe the nature, location, severity, duration, onset, triggers, or any associated factors."
+                state["followup_message"] = followup_question
+                state["final_response"] = followup_question
+                if followup_count >= 2:
+                    state["needs_more_symptom_detail"] = False
+                    state["followup_message"] = None
+                    state["final_response"] = "I'm unable to gather enough detail. Please describe your symptoms in your own words, or consult a healthcare professional."
+                    return state
                 return state
-            # If YES, proceed as normal
             state["needs_more_symptom_detail"] = False
+            state["followup_count"] = 0
             return state
         except Exception as e:
             logger.error(f"Error in gather_symptoms: {e}")
@@ -201,11 +234,13 @@ class GraphFlow:
             state["rag_context"] = None
             state["uploaded_image_bytes"] = None
             return state
-        # Use project and nlp_service from state for in-process RAG
         project = state.get('project')
-        nlp_service = state.get('nlp_service')
-        context = tools.retrieve_relevant_documents(input_data.user_query, nlp_service=nlp_service, project=project)
-        response_content = f"Context: {context}"
+        if project is not None and self.nlp_service is not None:
+            context = await self.nlp_service.search_vector_db_collection(project, input_data.user_query)
+            response_content = f"Context: {context}"
+        else:
+            context = None
+            response_content = "Project context is not available. Some RAG features may be limited."
         logger.info("✅ Information request handled")
         state["final_response"] = response_content
         state["rag_context"] = context
@@ -219,22 +254,13 @@ class GraphFlow:
             accumulated_symptoms=state.get('accumulated_symptoms', ''),
             uploaded_image_bytes=state.get('uploaded_image_bytes')
         )
-                # Get project_id safely from state or fallback
         project = state.get("project")
-        project_id = state.get("project_id") or (getattr(project, "project_id", None) if project else None)
-        nlp_service = state.get("nlp_service")
-
-        logger.info(f"📁 Using project ID in analysis: {project_id}")
-        nlp_service = state.get('nlp_service')
-        logger.info(f"📁 Using project ID in analysis: {getattr(project, 'project_id', None)}")
-
-        rag_result = tools.retrieve_relevant_documents(
-         input_data.accumulated_symptoms,
-         nlp_service=nlp_service,
-         project_id=project_id  # ← changed to pass id directly
-       )
-        context = rag_result.get("context")
-        is_sufficient = rag_result.get("is_sufficient", False)
+        if project is not None and self.nlp_service is not None:
+            context = await self.nlp_service.search_vector_db_collection(project, input_data.accumulated_symptoms)
+            is_sufficient = bool(context)
+        else:
+            context = None
+            is_sufficient = False
         matched_icd_codes = state.get('matched_icd_codes', None)
         logger.info(f"✅ Final analysis completed. Context sufficiency: {is_sufficient}")
         state["rag_context"] = context
@@ -320,13 +346,40 @@ class GraphFlow:
 
     async def prepare_final_output(self, state: AgentState) -> AgentState:
         """Prepares the final output for the user."""
-        logger.info(f"📤 Preparing final output... Incoming state: {state}")
+        logger.info(f"\U0001F4E4 Preparing final output... Incoming state: {state}")
+        # If context/symptom sufficiency is False or needs_more_symptom_detail is set, always return a helpful follow-up
+        if (
+            state.get("needs_more_symptom_detail")
+            or not state.get("context_is_sufficient", True)
+            or (state.get("final_response") and state.get("final_response").strip().endswith("?"))  # Heuristic: if final_response is a question, treat as follow-up
+            or (state.get("symptom_sufficiency", "NO").startswith("NO"))
+        ):
+            followup = state.get("followup_message") or state.get("final_response")
+            if not followup or followup.strip().lower() == "processing complete.":
+                followup = "Could you please provide more details about your symptoms? For example: When did it start, how severe is it, and are there any other symptoms?"
+            state["final_response"] = followup
+            state["final_output"] = followup
+            state["needs_more_symptom_detail"] = True
+            state["followup_message"] = followup
+            if not state.get("symptom_sufficiency"):
+                state["symptom_sufficiency"] = "NO"
+            logger.info("[prepare_final_output] Insufficient detail: returning follow-up message and setting all follow-up fields.")
+            return state
         input_data = FinalOutputPreparerInput(
             final_explanation=state.get('final_explanation'),
             final_response=state.get('final_response')
         )
         final_response = input_data.final_response or input_data.final_explanation or "Processing complete."
-        logger.info("✅ Final output prepared")
+        # PATCH: Never return 'Processing complete.' if symptoms are insufficient
+        if final_response.strip().lower() == "processing complete." and state.get("symptom_sufficiency", "NO").startswith("NO"):
+            final_response = "Could you please provide more details about your symptoms? For example: When did it start, how severe is it, and are there any other symptoms?"
+            state["needs_more_symptom_detail"] = True
+            state["followup_message"] = final_response
+        logger.info("\u2705 Final output prepared")
         state["final_response"] = final_response
         state["final_output"] = final_response  # Ensure final_output is set for downstream consumers
         return state
+
+# NOTE: When creating a GraphFlow instance, always pass the nlp_service argument:
+# Example: graph_flow = GraphFlow(state, nlp_service=your_nlp_service_instance)
+# This ensures project-aware retrieval is used in all flows.
